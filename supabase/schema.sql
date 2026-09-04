@@ -287,7 +287,14 @@ begin
            'x',      s.state->>'x',
            'o',      s.state->>'o',
            'winner', winner,
-           'scores', coalesce(s.state->'scores', '{"X":0,"O":0,"draws":0}'::jsonb)),
+           -- Everything the client tracks that the move itself does not touch
+           -- rides along untouched: series scores, bracket, mode, and so on.
+           'wins',    coalesce(s.state->'wins', '{}'::jsonb),
+           'draws',   coalesce(s.state->'draws', '0'::jsonb),
+           'mode',    coalesce(s.state->'mode', '"series"'::jsonb),
+           'bestOf',  coalesce(s.state->'bestOf', '3'::jsonb),
+           'game',    coalesce(s.state->'game', '1'::jsonb),
+           'bracket', coalesce(s.state->'bracket', 'null'::jsonb)),
          status = case when winner is null then 'active' else 'done' end,
          updated_at = now()
    where id = p_session

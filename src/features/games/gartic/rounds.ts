@@ -20,16 +20,38 @@ export function chainForAuthor(author: UUID, stepIndex: number, order: UUID[]): 
   return ((seat - stepIndex) % n + n) % n;
 }
 
-export function kindForStep(stepIndex: number): StepKind {
+export type FirstStep = 'prompt' | 'drawing';
+
+/**
+ * Whether this step is written or drawn.
+ *
+ * Starting on a drawing ("draw anything") is the other way people play, so the
+ * alternation has to key off where the chain began rather than assuming a
+ * prompt at step zero.
+ */
+export function kindForStep(stepIndex: number, firstStep: FirstStep = 'prompt'): StepKind {
+  if (firstStep === 'drawing') return stepIndex % 2 === 0 ? 'drawing' : 'guess';
   if (stepIndex === 0) return 'prompt';
   return stepIndex % 2 === 1 ? 'drawing' : 'guess';
 }
 
-/** The game ends once every player has contributed to every chain once. */
-export function totalSteps(playerCount: number): number {
-  return playerCount;
+/**
+ * How long a game runs. Left to itself that is one step per player, which is
+ * what makes every chain pass through everybody exactly once — but a host can
+ * pin it shorter or longer.
+ */
+export function totalSteps(playerCount: number, rounds = 0): number {
+  return rounds > 0 ? rounds : playerCount;
 }
 
-export function isComplete(stepIndex: number, playerCount: number): boolean {
-  return stepIndex >= totalSteps(playerCount);
+export function isComplete(stepIndex: number, playerCount: number, rounds = 0): boolean {
+  return stepIndex >= totalSteps(playerCount, rounds);
+}
+
+/** Seconds allowed for a step of this kind. */
+export function secondsFor(
+  kind: StepKind,
+  settings: { writeSeconds: number; drawSeconds: number },
+): number {
+  return kind === 'drawing' ? settings.drawSeconds : settings.writeSeconds;
 }

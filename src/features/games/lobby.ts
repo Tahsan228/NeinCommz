@@ -30,10 +30,10 @@ export const GAMES: GameMeta[] = [
     id: 'tictactoe',
     name: 'Tic-Tac-Toe',
     icon: 'grid',
-    blurb: 'Best of whatever',
+    blurb: 'Series or knockout',
     min: 2,
     hardMin: 2,
-    max: 2,
+    max: 8,
     tint: 'rgba(100, 182, 255, 0.22)',
   },
   {
@@ -56,18 +56,44 @@ export function gameMeta(id: GameId): GameMeta {
 function initialState(game: GameId): Record<string, unknown> {
   switch (game) {
     case 'tictactoe':
+      // Scores are keyed by profile id, never by mark: the marks swap between
+      // games, so an X/O tally silently hands one player the other's wins.
       return {
         board: ['', '', '', '', '', '', '', '', ''],
         turn: 'X',
         x: null,
         o: null,
         winner: null,
-        scores: { X: 0, O: 0, draws: 0 },
+        mode: 'series',
+        bestOf: 3,
+        wins: {},
+        draws: 0,
+        game: 1,
+        bracket: null,
       };
     case 'gartic':
-      return { phase: 'lobby', round: 0, order: [], seconds: 70, startedAt: null };
+      return {
+        phase: 'lobby',
+        step: 0,
+        order: [],
+        settings: {
+          writeSeconds: 50,
+          drawSeconds: 90,
+          rounds: 0, // 0 = one step per player
+          firstStep: 'prompt',
+        },
+        startedAt: null,
+      };
     case 'haxball':
-      return { score: { red: 0, blue: 0 }, kickoff: true };
+      // Starts in a lobby rather than kicking off immediately, so the host can
+      // set the rules and everyone can pick a side first.
+      return {
+        phase: 'lobby',
+        teamSize: 2,
+        series: { bestOf: 1, wins: { red: 0, blue: 0 }, match: 1 },
+        lastResult: null,
+        startedAt: null,
+      };
   }
 }
 
@@ -133,6 +159,14 @@ export async function mySessions(profileId: UUID): Promise<Set<UUID>> {
     .select('session_id')
     .eq('profile_id', profileId);
   return new Set(((data as { session_id: UUID }[]) ?? []).map((r) => r.session_id));
+}
+
+/** Move someone between red (0), blue (1) and the spectator bench (2). */
+export async function setTeam(sessionId: UUID, profileId: UUID, team: number): Promise<void> {
+  await supabase
+    .from('game_players')
+    .update({ team })
+    .match({ session_id: sessionId, profile_id: profileId });
 }
 
 export async function invite(sessionId: UUID, fromId: UUID, toId: UUID): Promise<void> {

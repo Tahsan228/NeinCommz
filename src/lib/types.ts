@@ -137,14 +137,37 @@ export interface GarticRound {
   author_id: UUID;
   kind: 'prompt' | 'drawing' | 'guess';
   text_content: string | null;
-  strokes: Stroke[] | null;
+  strokes: DrawOp[] | null;
   created_at: string;
 }
 
-export interface Stroke {
+/**
+ * One drawing operation. Stored rather than pixels, so a drawing stays a few
+ * kilobytes, scales to any canvas, and can be replayed — which is also what
+ * lets the paint bucket work: a fill is just another op in the sequence.
+ *
+ * `t` is optional so drawings saved by the original stroke-only version still
+ * replay: no `t` means a freehand stroke.
+ */
+export interface DrawOp {
+  t?: 'stroke' | 'fill' | 'line' | 'rect' | 'ellipse';
   c: string;
-  w: number;
-  p: number[];
+  w?: number;
+  /** Freehand points, flattened as x,y,x,y… */
+  p?: number[];
+  /** Fill origin. */
+  x?: number;
+  y?: number;
+  /** Shape corners. */
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  /** Filled shape rather than outlined. */
+  f?: boolean;
 }
+
+/** @deprecated kept so older imports keep compiling. */
+export type Stroke = DrawOp;
 
 export const MAIN_ROOM: UUID = '00000000-0000-0000-0000-000000000001';

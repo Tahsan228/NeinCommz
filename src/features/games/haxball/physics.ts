@@ -1,33 +1,88 @@
 /**
  * A small deterministic 2D world: discs on a pitch, elastic collisions, and a
- * ball you can kick. Kept free of React and of the network so it can be
- * stepped identically on the host and reasoned about in tests.
+ * ball you charge up and release. Kept free of React and of the network so it
+ * can be stepped identically on the host and reasoned about in tests.
  *
- * This is a simplified take on Haxball rather than a clone: same shape of
- * game, considerably simpler collision resolution.
+ * This is a simplified take on Haxball rather than a clone: same shape of game,
+ * considerably simpler collision resolution.
  */
 
-export const PITCH = {
-  w: 840,
-  h: 440,
+export interface Pitch {
+  w: number;
+  h: number;
   /** Playing area inset from the canvas edge. */
-  pad: 34,
-  goalHeight: 150,
-  goalDepth: 26,
+  pad: number;
+  goalHeight: number;
+  goalDepth: number;
+}
+
+export const PITCH_PRESETS: Record<'small' | 'normal' | 'big', Pitch> = {
+  small: { w: 700, h: 380, pad: 30, goalHeight: 130, goalDepth: 24 },
+  normal: { w: 840, h: 440, pad: 34, goalHeight: 150, goalDepth: 26 },
+  big: { w: 1000, h: 520, pad: 38, goalHeight: 175, goalDepth: 30 },
 };
+
+export type PitchSize = keyof typeof PITCH_PRESETS;
+
+export const PITCH: Pitch = PITCH_PRESETS.normal;
 
 export const PLAYER_R = 15;
 export const BALL_R = 9;
 
-const PLAYER_ACCEL = 0.42;
-const PLAYER_DAMP = 0.94;
-const BALL_DAMP = 0.985;
-const KICK_POWER = 5.6;
-const KICK_RANGE = 6;
 const PLAYER_MASS = 1;
 const BALL_MASS = 0.55;
 const RESTITUTION = 0.62;
-const MAX_BALL_SPEED = 16;
+
+/**
+ * Everything a host can tune before kickoff. Bundled into the world so the
+ * simulation reads its own settings rather than module constants, which is
+ * what makes per-room configuration possible at all.
+ */
+export interface Rules {
+  /** Acceleration per tick. Top speed works out near accel * damp / (1 - damp). */
+  playerAccel: number;
+  playerDamping: number;
+  ballDamping: number;
+  /** Impulse from a tap with no charge. */
+  kickMin: number;
+  /** Impulse from a fully charged shot. */
+  kickMax: number;
+  /** Charge gained per tick while the kick key is held. */
+  chargeRate: number;
+  maxBallSpeed: number;
+  /** Goals needed to win. 0 means play forever. */
+  scoreLimit: number;
+  /** Match length in seconds. 0 means no clock. */
+  timeLimitSec: number;
+  pitchSize: PitchSize;
+}
+
+// Deliberately sluggish: the old values crossed the pitch in about two
+// seconds, which left no time to position or aim. This is roughly half that.
+export const DEFAULT_RULES: Rules = {
+  playerAccel: 0.22,
+  playerDamping: 0.935,
+  ballDamping: 0.99,
+  kickMin: 2.2,
+  kickMax: 9.5,
+  chargeRate: 0.022,
+  maxBallSpeed: 18,
+  scoreLimit: 5,
+  timeLimitSec: 300,
+  pitchSize: 'normal',
+};
+
+export const SPEED_PRESETS: Record<string, number> = {
+  Snail: 0.14,
+  Slow: 0.22,
+  Normal: 0.3,
+  Fast: 0.4,
+};
+
+const KICK_RANGE = 8;
+const KICK_COOLDOWN = 12;
+/** Ticks of full-charge hold before it stops building. */
+export const MAX_CHARGE = 1;
 
 export interface Disc {
   x: number;
@@ -41,8 +96,14 @@ export interface Disc {
 export interface HaxPlayer extends Disc {
   id: string;
   team: 0 | 1;
-  /** Frames of kick cooldown remaining, so holding the key does not machine-gun. */
+  /** Frames of kick cooldown remaining, so a held key cannot machine-gun. */
   cooldown: number;
+  /** 0..1 shot power, built while the kick key is held. */
+  charge: number;
+  kickHeld: boolean;
+  /** Unit vector the next shot would travel along, for the aim guide. */
+  aimX: number;
+  aimY: number;
 }
 
 export interface Input {
@@ -63,21 +124,36 @@ export interface World {
   celebrating: number;
   lastScorer: 0 | 1 | null;
   tick: number;
+  rules: Rules;
+  pitch: Pitch;
+  /** Set once a score or time limit is reached; the host stops stepping. */
+  finished: boolean;
+  /** Winner of the match, or null for a draw. Only meaningful once finished. */
+  winner: 0 | 1 | null;
 }
 
-export function bounds() {
-  const left = PITCH.pad;
-  const right = PITCH.w - PITCH.pad;
-  const top = PITCH.pad;
-  const bottom = PITCH.h - PITCH.pad;
-  const goalTop = (PITCH.h - PITCH.goalHeight) / 2;
-  const goalBottom = goalTop + PITCH.goalHeight;
+export function bounds(pitch: Pitch = PITCH) {
+  const left = pitch.pad;
+  const right = pitch.w - pitch.pad;
+  const top = pitch.pad;
+  const bottom = pitch.h - pitch.pad;
+  const goalTop = (pitch.h - pitch.goalHeight) / 2;
+  const goalBottom = goalTop + pitch.goalHeight;
   return { left, right, top, bottom, goalTop, goalBottom };
 }
 
-export function kickoffPositions(players: HaxPlayer[]): void {
-  const cx = PITCH.w / 2;
-  const cy = PITCH.h / 2;
+export function secondsElapsed(w: World): number {
+  return w.tick / 60;
+}
+
+export function secondsRemaining(w: World): number {
+  if (!w.rules.timeLimitSec) return Infinity;
+  return Math.max(0, w.rules.timeLimitSec - secondsElapsed(w));
+}
+
+export function kickoffPositions(players: HaxPlayer[], pitch: Pitch = PITCH): void {
+  const cx = pitch.w / 2;
+  const cy = pitch.h / 2;
   const perTeam = [0, 0];
   for (const p of players) {
     const i = perTeam[p.team]++;
@@ -86,10 +162,16 @@ export function kickoffPositions(players: HaxPlayer[]): void {
     p.y = cy + (i % 2 === 0 ? -1 : 1) * Math.floor(i / 2 + 0.5) * 70;
     p.vx = 0;
     p.vy = 0;
+    p.charge = 0;
+    p.kickHeld = false;
   }
 }
 
-export function createWorld(players: { id: string; team: 0 | 1 }[]): World {
+export function createWorld(
+  players: { id: string; team: 0 | 1 }[],
+  rules: Rules = DEFAULT_RULES,
+): World {
+  const pitch = PITCH_PRESETS[rules.pitchSize] ?? PITCH;
   const list: HaxPlayer[] = players.map((p) => ({
     id: p.id,
     team: p.team,
@@ -100,35 +182,60 @@ export function createWorld(players: { id: string; team: 0 | 1 }[]): World {
     r: PLAYER_R,
     m: PLAYER_MASS,
     cooldown: 0,
+    charge: 0,
+    kickHeld: false,
+    aimX: 1,
+    aimY: 0,
   }));
-  kickoffPositions(list);
+  kickoffPositions(list, pitch);
   return {
     players: list,
-    ball: { x: PITCH.w / 2, y: PITCH.h / 2, vx: 0, vy: 0, r: BALL_R, m: BALL_MASS },
+    ball: { x: pitch.w / 2, y: pitch.h / 2, vx: 0, vy: 0, r: BALL_R, m: BALL_MASS },
     score: { red: 0, blue: 0 },
     celebrating: 0,
     lastScorer: null,
     tick: 0,
+    rules,
+    pitch,
+    finished: false,
+    winner: null,
   };
 }
 
 export function resetKickoff(w: World): void {
-  kickoffPositions(w.players);
-  w.ball.x = PITCH.w / 2;
-  w.ball.y = PITCH.h / 2;
+  kickoffPositions(w.players, w.pitch);
+  w.ball.x = w.pitch.w / 2;
+  w.ball.y = w.pitch.h / 2;
   w.ball.vx = 0;
   w.ball.vy = 0;
 }
 
+function checkEnd(w: World): void {
+  const { scoreLimit, timeLimitSec } = w.rules;
+  if (scoreLimit > 0 && (w.score.red >= scoreLimit || w.score.blue >= scoreLimit)) {
+    w.finished = true;
+  } else if (timeLimitSec > 0 && secondsElapsed(w) >= timeLimitSec) {
+    w.finished = true;
+  }
+  if (w.finished) {
+    w.winner = w.score.red === w.score.blue ? null : w.score.red > w.score.blue ? 0 : 1;
+  }
+}
+
 /** Advance the world one fixed step. Mutates `w` — it is the hot loop. */
 export function step(w: World, inputs: Map<string, Input>): void {
+  if (w.finished) return;
+
   w.tick++;
 
   if (w.celebrating > 0) {
     w.celebrating--;
     if (w.celebrating === 0) resetKickoff(w);
+    checkEnd(w);
     return;
   }
+
+  const r = w.rules;
 
   for (const p of w.players) {
     const inp = inputs.get(p.id) ?? NO_INPUT;
@@ -136,34 +243,47 @@ export function step(w: World, inputs: Map<string, Input>): void {
     let ay = (inp.down ? 1 : 0) - (inp.up ? 1 : 0);
     if (ax !== 0 && ay !== 0) {
       // Diagonals must not be faster than the axes.
-      const inv = Math.SQRT1_2;
-      ax *= inv;
-      ay *= inv;
+      ax *= Math.SQRT1_2;
+      ay *= Math.SQRT1_2;
     }
-    p.vx = (p.vx + ax * PLAYER_ACCEL) * PLAYER_DAMP;
-    p.vy = (p.vy + ay * PLAYER_ACCEL) * PLAYER_DAMP;
+    p.vx = (p.vx + ax * r.playerAccel) * r.playerDamping;
+    p.vy = (p.vy + ay * r.playerAccel) * r.playerDamping;
 
     if (p.cooldown > 0) p.cooldown--;
 
-    if (inp.kick && p.cooldown === 0) {
-      const dx = w.ball.x - p.x;
-      const dy = w.ball.y - p.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 0 && d < p.r + w.ball.r + KICK_RANGE) {
-        w.ball.vx += (dx / d) * KICK_POWER;
-        w.ball.vy += (dy / d) * KICK_POWER;
-        p.cooldown = 14;
+    // A shot travels along player -> ball, so that is also what the aim guide
+    // has to draw. Keep the last direction when the ball is exactly on top.
+    const dx = w.ball.x - p.x;
+    const dy = w.ball.y - p.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0.001) {
+      p.aimX = dx / d;
+      p.aimY = dy / d;
+    }
+
+    if (inp.kick) {
+      // Hold to build power; the shot goes out on release.
+      p.charge = Math.min(MAX_CHARGE, p.charge + r.chargeRate);
+      p.kickHeld = true;
+    } else if (p.kickHeld) {
+      p.kickHeld = false;
+      const power = r.kickMin + p.charge * (r.kickMax - r.kickMin);
+      p.charge = 0;
+      if (p.cooldown === 0 && d > 0 && d < p.r + w.ball.r + KICK_RANGE) {
+        w.ball.vx += p.aimX * power;
+        w.ball.vy += p.aimY * power;
+        p.cooldown = KICK_COOLDOWN;
       }
     }
   }
 
-  w.ball.vx *= BALL_DAMP;
-  w.ball.vy *= BALL_DAMP;
+  w.ball.vx *= r.ballDamping;
+  w.ball.vy *= r.ballDamping;
 
   const speed = Math.hypot(w.ball.vx, w.ball.vy);
-  if (speed > MAX_BALL_SPEED) {
-    w.ball.vx = (w.ball.vx / speed) * MAX_BALL_SPEED;
-    w.ball.vy = (w.ball.vy / speed) * MAX_BALL_SPEED;
+  if (speed > r.maxBallSpeed) {
+    w.ball.vx = (w.ball.vx / speed) * r.maxBallSpeed;
+    w.ball.vy = (w.ball.vy / speed) * r.maxBallSpeed;
   }
 
   for (const p of w.players) {
@@ -180,15 +300,17 @@ export function step(w: World, inputs: Map<string, Input>): void {
     collide(w.players[i], w.ball);
   }
 
-  for (const p of w.players) confinePlayer(p);
+  for (const p of w.players) confinePlayer(p, w.pitch);
 
-  const scored = confineBall(w.ball);
+  const scored = confineBall(w.ball, w.pitch);
   if (scored !== null) {
     if (scored === 0) w.score.red++;
     else w.score.blue++;
     w.lastScorer = scored;
     w.celebrating = 110;
   }
+
+  checkEnd(w);
 }
 
 /** Push two overlapping discs apart and exchange momentum along the normal. */
@@ -224,8 +346,8 @@ export function collide(a: Disc, b: Disc): boolean {
 }
 
 /** Players are held inside the pitch; they cannot stand in the goal mouth. */
-export function confinePlayer(p: Disc): void {
-  const { left, right, top, bottom } = bounds();
+export function confinePlayer(p: Disc, pitch: Pitch = PITCH): void {
+  const { left, right, top, bottom } = bounds(pitch);
   if (p.x - p.r < left) {
     p.x = left + p.r;
     p.vx = Math.abs(p.vx) * 0.3;
@@ -248,8 +370,8 @@ export function confinePlayer(p: Disc): void {
  * Bounce the ball off the walls, except through a goal mouth.
  * Returns the scoring team (0 = red, 1 = blue) or null.
  */
-export function confineBall(b: Disc): 0 | 1 | null {
-  const { left, right, top, bottom, goalTop, goalBottom } = bounds();
+export function confineBall(b: Disc, pitch: Pitch = PITCH): 0 | 1 | null {
+  const { left, right, top, bottom, goalTop, goalBottom } = bounds(pitch);
   const inMouth = b.y > goalTop && b.y < goalBottom;
 
   if (b.x - b.r < left) {
@@ -279,12 +401,12 @@ export function confineBall(b: Disc): 0 | 1 | null {
   }
 
   // Once past the line, keep the ball from wandering out of the net entirely.
-  if (b.x < left - PITCH.goalDepth) {
-    b.x = left - PITCH.goalDepth;
+  if (b.x < left - pitch.goalDepth) {
+    b.x = left - pitch.goalDepth;
     b.vx = 0;
   }
-  if (b.x > right + PITCH.goalDepth) {
-    b.x = right + PITCH.goalDepth;
+  if (b.x > right + pitch.goalDepth) {
+    b.x = right + pitch.goalDepth;
     b.vx = 0;
   }
   return null;
@@ -296,9 +418,13 @@ export function confineBall(b: Disc): 0 | 1 | null {
 export interface Snapshot {
   t: number;
   b: [number, number, number, number];
-  p: [string, number, number, number, number, number][];
+  /** id, x, y, vx, vy, team, charge, aimX, aimY */
+  p: [string, number, number, number, number, number, number, number, number][];
   s: [number, number];
   c: number;
+  /** finished flag + winner, so clients can show the result without guessing */
+  f: 0 | 1;
+  w: number;
 }
 
 export function snapshot(w: World): Snapshot {
@@ -312,9 +438,14 @@ export function snapshot(w: World): Snapshot {
       round(p.vx),
       round(p.vy),
       p.team,
+      round(p.charge),
+      round(p.aimX),
+      round(p.aimY),
     ]) as Snapshot['p'],
     s: [w.score.red, w.score.blue],
     c: w.celebrating,
+    f: w.finished ? 1 : 0,
+    w: w.winner === null ? -1 : w.winner,
   };
 }
 
@@ -327,13 +458,29 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.score.red = s.s[0];
   w.score.blue = s.s[1];
   w.celebrating = s.c;
+  w.finished = s.f === 1;
+  w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 
   const seen = new Set<string>();
-  for (const [id, x, y, vx, vy, team] of s.p) {
+  for (const [id, x, y, vx, vy, team, charge, aimX, aimY] of s.p) {
     seen.add(id);
     let p = w.players.find((q) => q.id === id);
     if (!p) {
-      p = { id, team: team as 0 | 1, x, y, vx, vy, r: PLAYER_R, m: PLAYER_MASS, cooldown: 0 };
+      p = {
+        id,
+        team: team as 0 | 1,
+        x,
+        y,
+        vx,
+        vy,
+        r: PLAYER_R,
+        m: PLAYER_MASS,
+        cooldown: 0,
+        charge: 0,
+        kickHeld: false,
+        aimX: 1,
+        aimY: 0,
+      };
       w.players.push(p);
     }
     p.x = x;
@@ -341,10 +488,13 @@ export function applySnapshot(w: World, s: Snapshot): void {
     p.vx = vx;
     p.vy = vy;
     p.team = team as 0 | 1;
+    p.charge = charge;
+    p.aimX = aimX;
+    p.aimY = aimY;
   }
   w.players = w.players.filter((p) => seen.has(p.id));
 }
 
 function round(n: number): number {
-  return Math.round(n * 10) / 10;
+  return Math.round(n * 100) / 100;
 }
