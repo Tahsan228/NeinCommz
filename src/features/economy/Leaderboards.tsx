@@ -9,7 +9,7 @@ import { Icon, type IconName } from '../../components/Icon';
 import { isRated, rankFor } from './elo';
 
 type Period = 'today' | 'week' | 'month' | 'all';
-type GameId = 'all' | 'haxball' | 'tictactoe' | 'gartic';
+type GameId = 'all' | 'haxball' | 'tictactoe' | 'gartic' | 'chess';
 
 const PERIODS: { id: Period; label: string }[] = [
   { id: 'today', label: 'Today' },
@@ -21,6 +21,7 @@ const PERIODS: { id: Period; label: string }[] = [
 const GAMES: { id: GameId; label: string; icon: IconName }[] = [
   { id: 'all', label: 'Everything', icon: 'sparkle' },
   { id: 'haxball', label: 'Haxball', icon: 'football' },
+  { id: 'chess', label: 'Chess', icon: 'grid' },
   { id: 'tictactoe', label: 'Tic-Tac-Toe', icon: 'grid' },
   { id: 'gartic', label: 'Gartic', icon: 'palette' },
 ];

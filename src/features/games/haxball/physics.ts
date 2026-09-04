@@ -16,10 +16,13 @@ export interface Pitch {
   goalDepth: number;
 }
 
+// Goals are deliberately generous. A narrow mouth turns every match into a
+// scramble in front of the net, and players can now stand in the goal, so the
+// mouth has to be wide enough for a keeper and a striker at once.
 export const PITCH_PRESETS: Record<'small' | 'normal' | 'big', Pitch> = {
-  small: { w: 700, h: 380, pad: 30, goalHeight: 130, goalDepth: 24 },
-  normal: { w: 840, h: 440, pad: 34, goalHeight: 150, goalDepth: 26 },
-  big: { w: 1000, h: 520, pad: 38, goalHeight: 175, goalDepth: 30 },
+  small: { w: 700, h: 380, pad: 30, goalHeight: 170, goalDepth: 40 },
+  normal: { w: 840, h: 440, pad: 34, goalHeight: 200, goalDepth: 46 },
+  big: { w: 1000, h: 520, pad: 38, goalHeight: 235, goalDepth: 52 },
 };
 
 export type PitchSize = keyof typeof PITCH_PRESETS;
@@ -27,7 +30,7 @@ export type PitchSize = keyof typeof PITCH_PRESETS;
 export const PITCH: Pitch = PITCH_PRESETS.normal;
 
 export const PLAYER_R = 15;
-export const BALL_R = 9;
+export const BALL_R = 13;
 
 const PLAYER_MASS = 1;
 const BALL_MASS = 0.55;
@@ -393,23 +396,41 @@ export function collide(a: Disc, b: Disc): boolean {
   return true;
 }
 
-/** Players are held inside the pitch; they cannot stand in the goal mouth. */
+/**
+ * Hold a player inside the pitch — except that they may stand in the goal.
+ *
+ * Being able to sit between the posts is what makes a keeper possible, and
+ * chasing the ball into the net is half the fun. The side wall therefore moves
+ * back to the netting whenever a player is between the posts, and once they
+ * are inside a goal the posts become their ceiling and floor.
+ */
 export function confinePlayer(p: Disc, pitch: Pitch = PITCH): void {
-  const { left, right, top, bottom } = bounds(pitch);
-  if (p.x - p.r < left) {
-    p.x = left + p.r;
+  const { left, right, top, bottom, goalTop, goalBottom } = bounds(pitch);
+
+  const betweenPosts = p.y > goalTop && p.y < goalBottom;
+  const leftLimit = betweenPosts ? left - pitch.goalDepth : left;
+  const rightLimit = betweenPosts ? right + pitch.goalDepth : right;
+
+  if (p.x - p.r < leftLimit) {
+    p.x = leftLimit + p.r;
     p.vx = Math.abs(p.vx) * 0.3;
   }
-  if (p.x + p.r > right) {
-    p.x = right - p.r;
+  if (p.x + p.r > rightLimit) {
+    p.x = rightLimit - p.r;
     p.vx = -Math.abs(p.vx) * 0.3;
   }
-  if (p.y - p.r < top) {
-    p.y = top + p.r;
+
+  // Inside a goal, the posts are the walls rather than the touchlines.
+  const inGoal = p.x < left || p.x > right;
+  const yTop = inGoal ? goalTop : top;
+  const yBottom = inGoal ? goalBottom : bottom;
+
+  if (p.y - p.r < yTop) {
+    p.y = yTop + p.r;
     p.vy = Math.abs(p.vy) * 0.3;
   }
-  if (p.y + p.r > bottom) {
-    p.y = bottom - p.r;
+  if (p.y + p.r > yBottom) {
+    p.y = yBottom - p.r;
     p.vy = -Math.abs(p.vy) * 0.3;
   }
 }

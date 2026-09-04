@@ -284,3 +284,161 @@ export function withAlpha(hex: string, alpha: number): string {
   const n = parseInt(h, 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
+
+/* ---------------------------------------------------------- ball designs */
+
+type BallPainter = (
+  ctx: CanvasRenderingContext2D,
+  r: number,
+  accent: string,
+  tick: number,
+) => void;
+
+/** Painters draw at the origin; the caller has already translated and clipped. */
+const BALLS: Record<string, BallPainter> = {
+  ball_classic: (ctx, r) => {
+    const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(1, '#c9c9d2');
+    ctx.fillStyle = g;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  },
+
+  ball_football: (ctx, r, _a, tick) => {
+    ctx.fillStyle = '#f4f4f6';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    // A centre pentagon plus five around it, rotating as the ball travels.
+    const spin = tick / 26;
+    ctx.fillStyle = '#17171c';
+    poly(ctx, 0, 0, r * 0.42, 5, spin);
+    for (let i = 0; i < 5; i++) {
+      const a = spin + (i * 2 * Math.PI) / 5 + Math.PI / 5;
+      poly(ctx, Math.cos(a) * r * 0.82, Math.sin(a) * r * 0.82, r * 0.3, 5, a);
+    }
+  },
+
+  ball_beach: (ctx, r, _a, tick) => {
+    const spin = tick / 30;
+    const colors = ['#e0574f', '#ffffff', '#4a9de0', '#ffffff', '#e6b422', '#ffffff'];
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, r, spin + (i * Math.PI) / 3, spin + ((i + 1) * Math.PI) / 3);
+      ctx.closePath();
+      ctx.fillStyle = colors[i];
+      ctx.fill();
+    }
+  },
+
+  ball_tennis: (ctx, r, _a, tick) => {
+    ctx.fillStyle = '#d6e94a';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.save();
+    ctx.rotate(tick / 28);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = r * 0.16;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(side * r * 1.15, 0, r * 0.95, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+
+  ball_eight: (ctx, r) => {
+    ctx.fillStyle = '#101014';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.52, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.fillStyle = '#101014';
+    ctx.font = `700 ${Math.round(r * 0.8)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('8', 0, r * 0.04);
+    ctx.textBaseline = 'alphabetic';
+  },
+
+  ball_disco: (ctx, r, _a, tick) => {
+    ctx.fillStyle = '#20202a';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    for (let ring = 0; ring < 3; ring++) {
+      const ry = -r + ((ring + 0.5) * 2 * r) / 3;
+      for (let i = 0; i < 7; i++) {
+        const a = tick / 18 + i + ring;
+        ctx.fillStyle = `hsl(${(a * 40) % 360} 70% ${55 + Math.sin(a * 3) * 20}%)`;
+        ctx.fillRect(-r + (i * 2 * r) / 7, ry - r * 0.3, (2 * r) / 7 - 1, r * 0.6);
+      }
+    }
+  },
+
+  ball_plasma: (ctx, r, accent, tick) => {
+    const pulse = 0.6 + 0.4 * Math.sin(tick / 7);
+    const g = ctx.createRadialGradient(0, 0, r * 0.05, 0, 0, r);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.45, withAlpha(accent, 0.95));
+    g.addColorStop(1, withAlpha(accent, 0.25 + pulse * 0.4));
+    ctx.fillStyle = g;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  },
+
+  ball_pixel: (ctx, r) => {
+    const cells = 6;
+    const size = (r * 2) / cells;
+    for (let x = 0; x < cells; x++) {
+      for (let y = 0; y < cells; y++) {
+        const dx = x - (cells - 1) / 2;
+        const dy = y - (cells - 1) / 2;
+        const far = Math.hypot(dx, dy) / (cells / 2);
+        ctx.fillStyle = far > 0.75 ? '#8d8d99' : far > 0.4 ? '#d5d5de' : '#ffffff';
+        ctx.fillRect(-r + x * size, -r + y * size, size + 0.5, size + 0.5);
+      }
+    }
+  },
+};
+
+function poly(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  sides: number,
+  rotation: number,
+): void {
+  ctx.beginPath();
+  for (let i = 0; i < sides; i++) {
+    const a = rotation + (i * 2 * Math.PI) / sides;
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Draw the ball at (x, y), clipped to its circle so designs cannot spill. */
+export function paintBall(
+  id: string | undefined,
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  accent: string,
+  tick: number,
+): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  (BALLS[id ?? 'ball_classic'] ?? BALLS.ball_classic)(ctx, r, accent, tick);
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.stroke();
+}

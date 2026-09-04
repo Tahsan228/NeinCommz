@@ -121,7 +121,7 @@ export function ProfileCard({ id, onClose }: { id: UUID; onClose: () => void }) 
 
       <div className="label">Ratings</div>
       <div className="group" style={{ marginBottom: 16 }}>
-        {(['haxball', 'tictactoe', 'gartic'] as const).map((g) => {
+        {(['haxball', 'chess', 'tictactoe', 'gartic'] as const).map((g) => {
           const st = statFor(id, g);
           const rank = st && isRated(g) ? rankFor(st.elo) : null;
           return (

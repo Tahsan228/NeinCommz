@@ -7,6 +7,7 @@ import { setState, setTeam } from '../lobby';
 import { useEconomy } from '../../../state/economy';
 import {
   celebrationText,
+  paintBall,
   paintGoalEffect,
   paintTrail,
   type TrailPoint,
@@ -961,22 +962,23 @@ function drawPitch(
     }
   }
 
-  // Ball, with a soft shadow so it reads as being above the pitch.
+  // Ball, with a soft shadow so it reads as being above the pitch. Its design
+  // belongs to whoever touched it last, the same rule as the trail.
   ctx.beginPath();
-  ctx.ellipse(w.ball.x + 2, w.ball.y + 3, BALL_R, BALL_R * 0.7, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.ellipse(w.ball.x + 2, w.ball.y + 4, BALL_R, BALL_R * 0.7, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(w.ball.x, w.ball.y, BALL_R, 0, Math.PI * 2);
-  const bg = ctx.createRadialGradient(w.ball.x - 3, w.ball.y - 3, 1, w.ball.x, w.ball.y, BALL_R);
-  bg.addColorStop(0, '#ffffff');
-  bg.addColorStop(1, '#c9c9d2');
-  ctx.fillStyle = bg;
-  ctx.fill();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.stroke();
+  const owner = w.lastTouch ? profiles.get(w.lastTouch) : undefined;
+  paintBall(
+    cosmetics && w.lastTouch ? cosmetics.equippedOf(w.lastTouch).ball : undefined,
+    ctx,
+    w.ball.x,
+    w.ball.y,
+    BALL_R,
+    owner?.accent_color ?? '#e0574f',
+    w.tick,
+  );
 
   if (w.countdown > 0) {
     const secondsLeft = Math.ceil(w.countdown / 60);

@@ -2013,3 +2013,187 @@
     display: none;
   }
 }
+
+/* ============================================================== chess ==== */
+
+.chess-stage {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+}
+
+.chess-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chess-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: min(72vh, 520px);
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--lift-3);
+  border: 1px solid var(--edge);
+}
+
+.chess-square {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 0;
+  transition: background var(--fast);
+}
+.chess-square[data-dark='false'] { background: #ecd9b8; }
+.chess-square[data-dark='true']  { background: #a97d55; }
+
+.chess-square[data-sel='true'] {
+  background: #bfc76a;
+}
+.chess-square[data-check='true'] {
+  background: radial-gradient(circle, #ff6b5e 20%, #c94a3f 100%);
+}
+
+/* A dot for a quiet move, a ring for a capture — the standard shorthand. */
+.chess-square[data-target='true']::after {
+  content: '';
+  position: absolute;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(20, 20, 24, 0.32);
+  pointer-events: none;
+}
+.chess-square[data-capture='true']::after {
+  width: 84%;
+  height: 84%;
+  background: none;
+  border: 4px solid rgba(20, 20, 24, 0.32);
+}
+
+.chess-piece {
+  font-size: min(8vh, 46px);
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+.chess-piece[data-color='w'] {
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55), 0 0 2px rgba(0, 0, 0, 0.8);
+}
+.chess-piece[data-color='b'] {
+  color: #1b1b20;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.chess-rank,
+.chess-file {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(30, 25, 20, 0.5);
+  pointer-events: none;
+}
+.chess-rank { top: 2px; left: 3px; }
+.chess-file { bottom: 1px; right: 3px; }
+
+.chess-player {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  border-radius: var(--r-row);
+  background: var(--row);
+  border: 1px solid var(--edge);
+  box-shadow: var(--lift-1);
+}
+.chess-player[data-turn='true'] {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.chess-player-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chess-bot-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--control-fill);
+  box-shadow: var(--lift-1);
+  color: var(--ink-dim);
+}
+
+.chess-taken {
+  flex: 1;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: -4px;
+  color: var(--ink-faint);
+  overflow: hidden;
+}
+
+.chess-lead {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4fd695;
+  font-variant-numeric: tabular-nums;
+}
+
+.chess-color-dot {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+.chess-color-dot[data-color='w'] { background: #f4f4f6; }
+.chess-color-dot[data-color='b'] { background: #24242c; }
+
+.chess-panel {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chess-moves {
+  flex: 1;
+  min-height: 120px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-card);
+  background: var(--sunken);
+  box-shadow: var(--inset);
+  font-variant-numeric: tabular-nums;
+}
+
+.chess-move-row {
+  display: grid;
+  grid-template-columns: 26px 1fr 1fr;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 2px 0;
+}
+.chess-move-no {
+  color: var(--ink-faint);
+}
+
+@media (max-width: 780px) {
+  .chess-panel {
+    width: min(520px, 100%);
+  }
+}

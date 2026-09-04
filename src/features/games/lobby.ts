@@ -37,6 +37,17 @@ export const GAMES: GameMeta[] = [
     tint: 'rgba(100, 182, 255, 0.22)',
   },
   {
+    id: 'chess',
+    name: 'Chess',
+    icon: 'grid',
+    blurb: 'Or play the computer',
+    min: 2,
+    // Chess is the one game you can open alone, because it ships an opponent.
+    hardMin: 1,
+    max: 2,
+    tint: 'rgba(230, 180, 34, 0.22)',
+  },
+  {
     id: 'gartic',
     name: 'Gartic Phone',
     icon: 'palette',
@@ -55,6 +66,18 @@ export function gameMeta(id: GameId): GameMeta {
 /** Fresh state for a session, before anyone has done anything. */
 function initialState(game: GameId): Record<string, unknown> {
   switch (game) {
+    case 'chess':
+      return {
+        phase: 'lobby',
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        history: [],
+        san: [],
+        white: null,
+        black: null,
+        bot: null,
+        winner: null,
+        reason: null,
+      };
     case 'tictactoe':
       // Scores are keyed by profile id, never by mark: the marks swap between
       // games, so an X/O tally silently hands one player the other's wins.

@@ -6,6 +6,7 @@ import {
   PLAYER_R,
   bounds,
   canKick,
+  confinePlayer,
   createWorld,
   step,
   type Input,
@@ -220,5 +221,67 @@ describe('reach', () => {
     const hold: Input = { up: false, down: false, left: false, right: false, kick: true };
     for (let i = 0; i < 60; i++) step(w, new Map([['a', hold]]));
     expect(w.players[0].charge).toBe(0);
+  });
+});
+
+describe('players in the goal', () => {
+  it('lets a player stand behind the goal line between the posts', () => {
+    const w = kickedOff([{ id: 'a', team: 0 }]);
+    const { left, goalTop, goalBottom } = bounds(w.pitch);
+    const p = w.players[0];
+
+    // Aim for deep inside the net, level with the middle of the mouth.
+    p.y = (goalTop + goalBottom) / 2;
+    p.x = left - 200;
+    confinePlayer(p, w.pitch);
+
+    // Held at the netting, not shoved back onto the pitch.
+    expect(p.x).toBeLessThan(left);
+    expect(p.x).toBeCloseTo(left - w.pitch.goalDepth + PLAYER_R, 5);
+  });
+
+  it('still keeps a player out of the wall away from the mouth', () => {
+    const w = kickedOff([{ id: 'a', team: 0 }]);
+    const { left, top } = bounds(w.pitch);
+    const p = w.players[0];
+
+    p.y = top + 30; // well above the goal mouth
+    p.x = left - 200;
+    confinePlayer(p, w.pitch);
+
+    expect(p.x).toBeCloseTo(left + PLAYER_R, 5);
+  });
+
+  it('treats the posts as the walls once a player is inside the net', () => {
+    const w = kickedOff([{ id: 'a', team: 0 }]);
+    const { left, goalTop, goalBottom } = bounds(w.pitch);
+    const p = w.players[0];
+
+    p.y = (goalTop + goalBottom) / 2;
+    p.x = left - w.pitch.goalDepth + PLAYER_R; // inside the goal
+    p.y = goalTop - 50; // try to slide out through the side netting
+    confinePlayer(p, w.pitch);
+
+    // Being out of the mouth pushes them back onto the pitch rather than
+    // letting them wander behind the goal.
+    expect(p.x).toBeGreaterThanOrEqual(left);
+  });
+
+  it('gives both ends the same freedom', () => {
+    const w = kickedOff([{ id: 'a', team: 1 }]);
+    const { right, goalTop, goalBottom } = bounds(w.pitch);
+    const p = w.players[0];
+
+    p.y = (goalTop + goalBottom) / 2;
+    p.x = right + 200;
+    confinePlayer(p, w.pitch);
+
+    expect(p.x).toBeGreaterThan(right);
+    expect(p.x).toBeCloseTo(right + w.pitch.goalDepth - PLAYER_R, 5);
+  });
+
+  it('has a mouth wide enough for two players to share', () => {
+    const w = kickedOff([{ id: 'a', team: 0 }]);
+    expect(w.pitch.goalHeight).toBeGreaterThan(PLAYER_R * 4);
   });
 });

@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { celebrationText, paintGoalEffect, paintTrail, type TrailPoint } from './cosmetics';
+import {
+  celebrationText,
+  paintBall,
+  paintGoalEffect,
+  paintTrail,
+  type TrailPoint,
+} from './cosmetics';
 
 const W = 190;
 const H = 84;
@@ -17,7 +23,7 @@ export function CosmeticPreview({
   accent,
 }: {
   id: string;
-  kind: 'trail' | 'goalfx' | 'celebration';
+  kind: 'trail' | 'goalfx' | 'celebration' | 'ball';
   accent: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -38,7 +44,12 @@ export function CosmeticPreview({
       ctx.fillStyle = '#16221a';
       ctx.fillRect(0, 0, W, H);
 
-      if (kind === 'trail') {
+      if (kind === 'ball') {
+        // Rolls across and back, so spinning designs show their motion.
+        const t = tick / 40;
+        const x = W / 2 + Math.sin(t) * (W / 2 - 30);
+        paintBall(id, ctx, x, H / 2, 22, accent, tick);
+      } else if (kind === 'trail') {
         // A ball tracing a lazy figure of eight, so the trail has curvature
         // to show off rather than a straight line.
         const t = tick / 34;

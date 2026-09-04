@@ -14,7 +14,7 @@ import { useSession } from './session';
 export interface ShopItem {
   id: string;
   name: string;
-  kind: 'trail' | 'goalfx' | 'celebration';
+  kind: 'trail' | 'goalfx' | 'celebration' | 'ball';
   price: number;
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
   is_default: boolean;

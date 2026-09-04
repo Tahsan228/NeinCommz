@@ -2,7 +2,7 @@ export type UUID = string;
 
 export type BlockKind = 'class' | 'free' | 'lunch' | 'activity' | 'other';
 export type Presence = 'online' | 'away' | 'offline';
-export type GameId = 'haxball' | 'tictactoe' | 'gartic';
+export type GameId = 'haxball' | 'tictactoe' | 'gartic' | 'chess';
 
 export interface Prefs {
   theme: 'graphite' | 'midnight' | 'forest' | 'plum' | 'paper';

@@ -6,9 +6,10 @@ import { Icon, type IconName } from '../../components/Icon';
 import { RARITY_COLOR, type Rarity } from './cosmetics';
 import { CosmeticPreview } from './CosmeticPreview';
 
-type Kind = 'trail' | 'goalfx' | 'celebration';
+type Kind = 'trail' | 'goalfx' | 'celebration' | 'ball';
 
 const KINDS: { id: Kind; label: string; icon: IconName; blurb: string }[] = [
+  { id: 'ball', label: 'Balls', icon: 'football', blurb: 'How the ball looks while you are the last to touch it.' },
   { id: 'trail', label: 'Ball trails', icon: 'sparkle', blurb: 'Follows the ball while you have it.' },
   { id: 'goalfx', label: 'Goal effects', icon: 'zap', blurb: 'Fires across the pitch when you score.' },
   { id: 'celebration', label: 'Celebrations', icon: 'message', blurb: 'What the pitch says after your goal.' },
@@ -23,7 +24,7 @@ export function Shop({ onClose }: { onClose: () => void }) {
   const { profile } = useSession();
   const { items, owned, equipped, buy, equip } = useEconomy();
 
-  const [kind, setKind] = useState<Kind>('trail');
+  const [kind, setKind] = useState<Kind>('ball');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [justBought, setJustBought] = useState<string | null>(null);

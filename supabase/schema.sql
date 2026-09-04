@@ -611,7 +611,16 @@ insert into shop_items (id, name, kind, price, rarity, is_default, blurb) values
   ('cel_nutmeg',      'Nutmeg!',         'celebration', 200,  'rare',      false, 'Only fair if it actually was one.'),
   ('cel_worldclass',  'World class',     'celebration', 340,  'rare',      false, 'Modesty is overrated.'),
   ('cel_siuu',        'SIUUU',           'celebration', 520,  'epic',      false, 'You know the one.'),
-  ('cel_goat',        'Simply the GOAT', 'celebration', 950,  'legendary', false, 'The final word.')
+  ('cel_goat',        'Simply the GOAT', 'celebration', 950,  'legendary', false, 'The final word.'),
+
+  ('ball_classic',    'Classic',         'ball',        0,    'common',    true,  'Plain white. Does the job.'),
+  ('ball_football',   'Football',        'ball',        140,  'common',    false, 'Pentagons that spin as it rolls.'),
+  ('ball_tennis',     'Tennis ball',     'ball',        190,  'common',    false, 'Fuzzy yellow, curved seams.'),
+  ('ball_beach',      'Beach ball',      'ball',        240,  'rare',      false, 'Six bright segments.'),
+  ('ball_eight',      'Eight ball',      'ball',        330,  'rare',      false, 'Straight off the pool table.'),
+  ('ball_pixel',      'Pixel',           'ball',        450,  'epic',      false, 'Rendered at tragic resolution.'),
+  ('ball_disco',      'Disco',           'ball',        700,  'epic',      false, 'Mirrored tiles, all colours.'),
+  ('ball_plasma',     'Plasma',          'ball',        1000, 'legendary', false, 'Glows and pulses in your colour.')
 on conflict (id) do update
   set name = excluded.name,
       kind = excluded.kind,

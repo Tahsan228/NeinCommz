@@ -9,6 +9,7 @@ import { RosterChip, useGameRoom } from './room';
 import { TicTacToeGame } from './tictactoe/TicTacToeGame';
 import { GarticGame } from './gartic/GarticGame';
 import { HaxballGame } from './haxball/HaxballGame';
+import { ChessGame } from './chess/ChessGame';
 
 export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: () => void }) {
   const { profile } = useSession();
@@ -167,6 +168,8 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
           <div className="empty">You left this room.</div>
         ) : session.game === 'tictactoe' ? (
           <TicTacToeGame session={session} players={players} profiles={byId} me={me} />
+        ) : session.game === 'chess' ? (
+          <ChessGame session={session} players={players} profiles={byId} me={me} />
         ) : session.game === 'gartic' ? (
           <GarticGame session={session} players={players} profiles={byId} me={me} />
         ) : (
