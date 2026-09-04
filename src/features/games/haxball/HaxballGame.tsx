@@ -5,6 +5,7 @@ import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState, setTeam } from '../lobby';
 import { BOT_PREFIX, BOT_SKILL, botInputs, botName, isBot, type BotSkill } from './bot';
+import { clampFocus, envelope } from './camera';
 import { useEconomy } from '../../../state/economy';
 import {
   celebrationText,
@@ -34,6 +35,7 @@ import {
   type PitchSize,
   type Rules,
   type GoalInfo,
+  type Pitch,
   type Snapshot,
   type World,
 } from './physics';
@@ -1292,14 +1294,6 @@ interface Tape {
   total: number;
 }
 
-/** 0 outside the window, ramping to 1 across the fade at each edge. */
-function envelope(t: number, from: number, to: number, fade = CROSSFADE): number {
-  if (t <= from - fade || t >= to + fade) return 0;
-  const rising = (t - (from - fade)) / (fade * 2);
-  const falling = ((to + fade) - t) / (fade * 2);
-  return Math.max(0, Math.min(1, Math.min(rising, falling)));
-}
-
 function easeOut(t: number): number {
   return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 }
@@ -1338,6 +1332,7 @@ function replayFrame(progress: number, length: number, shotIndex: number): numbe
  */
 function withCamera(
   ctx: CanvasRenderingContext2D,
+  pitch: Pitch,
   focus: { x: number; y: number } | null,
   zoom: number,
   anchorX: number,
@@ -1346,9 +1341,13 @@ function withCamera(
 ): void {
   ctx.save();
   if (focus) {
+    // Pulled back onto the pitch first: the grass is painted in world space,
+    // so any part of the screen looking past the touchline would simply keep
+    // the previous frame and smear the goal across it.
+    const safe = clampFocus(pitch, focus, zoom, anchorX, anchorY);
     ctx.translate(anchorX, anchorY);
-    ctx.scale(zoom, zoom);
-    ctx.translate(-focus.x, -focus.y);
+    ctx.scale(Math.max(1, zoom), Math.max(1, zoom));
+    ctx.translate(-safe.x, -safe.y);
   }
   draw();
   ctx.restore();
@@ -1442,9 +1441,9 @@ function drawGoalSequence(
   const focus = scorer ?? (goal ? { x: goal.x, y: goal.y } : null);
   const net = goalMouth(w, goal?.side ?? 1);
 
-  const aMoment = envelope(t, 0, MOMENT_END);
-  const aReplay = envelope(t, MOMENT_END, REPLAY_END);
-  const aRestart = envelope(t, REPLAY_END, 1);
+  const aMoment = envelope(t, 0, MOMENT_END, CROSSFADE);
+  const aReplay = envelope(t, MOMENT_END, REPLAY_END, CROSSFADE);
+  const aRestart = envelope(t, REPLAY_END, 1, CROSSFADE);
 
   /* ------------------------------------------------ 1. hold on the scorer */
   if (aMoment > 0) {
@@ -1454,7 +1453,7 @@ function drawGoalSequence(
     const anchorX = p.w * (0.5 + 0.18 * easeOut(local / 0.4));
 
     ctx.globalAlpha = aMoment;
-    withCamera(ctx, focus, zoom, anchorX, p.h / 2, () => {
+    withCamera(ctx, p, focus, zoom, anchorX, p.h / 2, () => {
       drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
 
       if (scorer) {
@@ -1537,7 +1536,7 @@ function drawGoalSequence(
     rw.goal = null;
 
     ctx.globalAlpha = aReplay;
-    withCamera(ctx, { x: rw.ball.x, y: rw.ball.y }, 1.5, p.w / 2, p.h / 2, () => {
+    withCamera(ctx, p, { x: rw.ball.x, y: rw.ball.y }, 1.5, p.w / 2, p.h / 2, () => {
       drawPitch(ctx, rw, me, profiles, {
         trail: [],
         equippedOf: cosmetics.equippedOf,
