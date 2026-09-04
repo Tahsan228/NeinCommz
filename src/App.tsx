@@ -19,6 +19,7 @@ import type { PublicProfile } from './lib/types';
 import { ChatColumn } from './features/chat/ChatColumn';
 import { GamesPanel } from './features/games/GamesPanel';
 import { StatusBoard } from './features/status/StatusBoard';
+import { Dashboard } from './features/dashboard/Dashboard';
 import { QuickStatus } from './features/status/QuickStatus';
 import { Shop } from './features/economy/Shop';
 import { Leaderboards } from './features/economy/Leaderboards';
@@ -136,6 +137,7 @@ function Home() {
         </Panel>
 
         <Panel label="Who's around" className="column-status">
+          <Dashboard />
           <StatusBoard />
         </Panel>
       </div>

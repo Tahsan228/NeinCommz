@@ -20,7 +20,7 @@ export const GAMES: GameMeta[] = [
     id: 'haxball',
     name: 'Haxball',
     icon: 'football',
-    blurb: '2v2 top-down football',
+    blurb: '2v2, or fill it with bots',
     min: 2,
     hardMin: 1,
     max: 8,
@@ -30,9 +30,10 @@ export const GAMES: GameMeta[] = [
     id: 'tictactoe',
     name: 'Tic-Tac-Toe',
     icon: 'grid',
-    blurb: 'Series or knockout',
+    blurb: 'Series, knockout or solo',
     min: 2,
-    hardMin: 2,
+    // Solvable, so it ships a perfect opponent and can be opened alone.
+    hardMin: 1,
     max: 8,
     tint: 'rgba(100, 182, 255, 0.22)',
   },
@@ -93,6 +94,7 @@ function initialState(game: GameId): Record<string, unknown> {
         draws: 0,
         game: 1,
         bracket: null,
+        bot: null,
       };
     case 'gartic':
       return {
@@ -113,6 +115,8 @@ function initialState(game: GameId): Record<string, unknown> {
       return {
         phase: 'lobby',
         teamSize: 2,
+        bots: { red: 0, blue: 0 },
+        botSkill: 'medium',
         series: { bestOf: 1, wins: { red: 0, blue: 0 }, match: 1 },
         lastResult: null,
         startedAt: null,

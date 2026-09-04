@@ -4,6 +4,7 @@ import type { GamePlayer, GameSession, Profile, UUID } from '../../../lib/types'
 import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState, setTeam } from '../lobby';
+import { BOT_PREFIX, BOT_SKILL, botInputs, botName, isBot, type BotSkill } from './bot';
 import { useEconomy } from '../../../state/economy';
 import {
   celebrationText,
@@ -51,6 +52,9 @@ interface HaxState {
   phase: 'lobby' | 'playing' | 'result';
   rules: Rules;
   teamSize: number;
+  /** Extra computer players, by team. */
+  bots: { red: number; blue: number };
+  botSkill: BotSkill;
   series: Series;
   lastResult: { red: number; blue: number; winner: number } | null;
   startedAt: string | null;
@@ -61,6 +65,8 @@ function readState(s: Record<string, unknown>): HaxState {
     phase: (s.phase as HaxState['phase']) ?? 'lobby',
     rules: { ...DEFAULT_RULES, ...((s.rules as Partial<Rules>) ?? {}) },
     teamSize: (s.teamSize as number) ?? 2,
+    bots: (s.bots as { red: number; blue: number }) ?? { red: 0, blue: 0 },
+    botSkill: (s.botSkill as BotSkill) ?? 'medium',
     series: (s.series as Series) ?? { bestOf: 1, wins: { red: 0, blue: 0 }, match: 1 },
     lastResult: (s.lastResult as HaxState['lastResult']) ?? null,
     startedAt: (s.startedAt as string | null) ?? null,
@@ -110,6 +116,12 @@ export function HaxballGame({
   const trailRef = useRef<TrailPoint[]>([]);
   /** Frame the current celebration started on, for effect timing. */
   const celebrateFromRef = useRef(0);
+  /** Rolling record of the last few seconds, for the goal replay. */
+  const tapeRef = useRef<Snapshot[]>([]);
+  /** The clip frozen at the moment a goal went in. */
+  const clipRef = useRef<Snapshot[]>([]);
+  /** A throwaway world used only to draw the replay back. */
+  const replayWorldRef = useRef<World | null>(null);
 
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [clock, setClock] = useState(0);
@@ -123,8 +135,18 @@ export function HaxballGame({
   const spectators = players.filter((p) => p.team !== 0 && p.team !== 1);
   const iAmPlaying = teamOf(me) !== SPECTATOR;
 
-  const rosterKey = onPitch
-    .map((p) => `${p.profile_id}:${p.team}`)
+  // Computer players are not rows in the database — they exist only in the
+  // session state — so they are spliced into the line-up here.
+  const lineUp = useMemo(() => {
+    const list = onPitch.map((p) => ({ id: p.profile_id, team: p.team as 0 | 1 }));
+    for (let i = 0; i < state.bots.red; i++) list.push({ id: `${BOT_PREFIX}r${i + 1}`, team: 0 });
+    for (let i = 0; i < state.bots.blue; i++) list.push({ id: `${BOT_PREFIX}b${i + 1}`, team: 1 });
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(onPitch.map((p) => [p.profile_id, p.team])), state.bots.red, state.bots.blue]);
+
+  const rosterKey = lineUp
+    .map((p) => `${p.id}:${p.team}`)
     .sort()
     .join('|');
 
@@ -143,10 +165,12 @@ export function HaxballGame({
       setReady(false);
       return;
     }
-    worldRef.current = createWorld(
-      onPitch.map((p) => ({ id: p.profile_id, team: p.team as 0 | 1 })),
-      state.rules,
-    );
+    worldRef.current = createWorld(lineUp, state.rules);
+    // A second world of the same shape, so a replay can be drawn without
+    // disturbing the live one.
+    replayWorldRef.current = createWorld(lineUp, state.rules);
+    tapeRef.current = [];
+    clipRef.current = [];
     scoreRef.current = { red: 0, blue: 0 };
     setScore({ red: 0, blue: 0 });
     reportedRef.current = -1;
@@ -231,7 +255,14 @@ export function HaxballGame({
     const id = window.setInterval(() => {
       const w = worldRef.current;
       if (!w) return;
-      step(w, inputsRef.current);
+
+      // Bots are decided fresh each tick and merged over the human inputs.
+      const inputs = new Map(inputsRef.current);
+      if (state.bots.red || state.bots.blue) {
+        for (const [id, input] of botInputs(w, state.botSkill)) inputs.set(id, input);
+      }
+
+      step(w, inputs);
       frame++;
       if (frame % BROADCAST_EVERY === 0) {
         void channelRef.current?.send({ type: 'broadcast', event: 'state', payload: snapshot(w) });
@@ -239,7 +270,7 @@ export function HaxballGame({
       syncScore(w.score);
     }, TICK_MS);
     return () => window.clearInterval(id);
-  }, [isHost, ready, state.phase]);
+  }, [isHost, ready, state.phase, state.bots.red, state.bots.blue, state.botSkill]);
 
   /* -------------------------------------------- host reports the result -- */
   useEffect(() => {
@@ -268,6 +299,7 @@ export function HaxballGame({
       // Rate the match. Everyone on the pitch is scored against the other
       // side; goals they were part of pay the per-score bonus. Only the host
       // reports, and the database refuses a second report for this session.
+      // Bots have no rating and no wallet, so only the people are reported.
       void award(
         session.id,
         onPitch.map((p) => ({
@@ -310,6 +342,22 @@ export function HaxballGame({
       const w = worldRef.current;
       if (!w) return;
 
+      // Record the run of play. Everyone keeps their own tape from what they
+      // are already drawing, so a replay costs nothing on the wire.
+      if (w.celebrating === 0 && w.countdown === 0 && !w.finished) {
+        tapeRef.current.push(snapshot(w));
+        // Roughly the last six seconds at 60fps.
+        if (tapeRef.current.length > 360) tapeRef.current.shift();
+      }
+
+      // Freeze the tape the instant a goal goes in.
+      if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 30) {
+        clipRef.current = tapeRef.current.slice(-240);
+      } else if (w.celebrating === 0) {
+        clipRef.current = [];
+        if (w.countdown === 0) tapeRef.current = tapeRef.current.slice(-360);
+      }
+
       // Ball history for the trail. Kept here rather than in the world so it
       // never has to survive a network round trip.
       if (w.countdown === 0 && w.celebrating === 0) {
@@ -325,6 +373,31 @@ export function HaxballGame({
         celebrateFromRef.current = w.celebrating;
       } else if (w.celebrating === 0) {
         celebrateFromRef.current = 0;
+      }
+
+      // While the goal is being celebrated, show it again in slow motion.
+      // The clip is stretched to exactly fill the celebration, so it always
+      // ends the moment play restarts.
+      const clip = clipRef.current;
+      const replayWorld = replayWorldRef.current;
+
+      if (w.celebrating > 0 && clip.length > 1 && replayWorld) {
+        const total = celebrateFromRef.current || 1;
+        const progress = 1 - w.celebrating / total;
+        const frame = Math.min(clip.length - 1, Math.floor(progress * (clip.length - 1)));
+
+        applySnapshot(replayWorld, clip[frame]);
+        replayWorld.celebrating = 0;
+        replayWorld.countdown = 0;
+
+        drawPitch(ctx, replayWorld, me, profiles, {
+          trail: [],
+          equippedOf,
+          celebrateTotal: 0,
+        });
+
+        drawReplayBadge(ctx, w.pitch.w, progress);
+        return;
       }
 
       drawPitch(ctx, w, me, profiles, {
@@ -562,7 +635,15 @@ function HaxLobby({
       'active',
     );
 
-  const canStart = red.length >= 1 && blue.length >= 1;
+  const canStart =
+    red.length + state.bots.red >= 1 && blue.length + state.bots.blue >= 1;
+
+  const setBots = (side: 'red' | 'blue', n: number) =>
+    void setState(
+      session.id,
+      { ...state, bots: { ...state.bots, [side]: Math.max(0, Math.min(4, n)) } },
+      'lobby',
+    );
 
   const Column = ({ team, list }: { team: number; list: GamePlayer[] }) => (
     <div className="group" style={{ padding: 12, minWidth: 168, flex: 1 }}>
@@ -572,6 +653,8 @@ function HaxLobby({
       >
         {team < 2 ? TEAM_NAME[team] : 'Spectators'}
         {team < 2 && ` ${list.length}/${state.teamSize}`}
+        {team === 0 && state.bots.red > 0 && ` +${state.bots.red} bot`}
+        {team === 1 && state.bots.blue > 0 && ` +${state.bots.blue} bot`}
       </div>
       {list.map((p) => {
         const pr = profiles.get(p.profile_id);
@@ -609,7 +692,9 @@ function HaxLobby({
       <div style={{ textAlign: 'center' }}>
         <h3 style={{ margin: '0 0 4px' }}>Pick your side</h3>
         <div className="row-sub">
-          {canStart ? 'Both teams have someone — ready when the host is.' : 'Each team needs at least one player.'}
+          {canStart
+        ? 'Both sides have someone — ready when the host is.'
+        : 'Each side needs at least one player, or a bot to stand in.'}
         </div>
       </div>
 
@@ -722,6 +807,54 @@ function HaxLobby({
                   <option value="300">5 minutes</option>
                   <option value="600">10 minutes</option>
                   <option value="0">No clock</option>
+                </select>
+              </Setting>
+            </div>
+
+            <div className="label" style={{ padding: '14px 0 10px' }}>Computer players</div>
+            <p className="row-sub" style={{ margin: '0 0 10px' }}>
+              Fill out a side when there are not enough of you. Bots have no
+              rating and earn nobody anything — they are there to make up the
+              numbers.
+            </p>
+            <div className="two-col">
+              <Setting label="Red bots">
+                <select
+                  className="select"
+                  value={state.bots.red}
+                  onChange={(e) => setBots('red', Number(e.target.value))}
+                >
+                  {[0, 1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </Setting>
+              <Setting label="Blue bots">
+                <select
+                  className="select"
+                  value={state.bots.blue}
+                  onChange={(e) => setBots('blue', Number(e.target.value))}
+                >
+                  {[0, 1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </Setting>
+              <Setting label="Bot skill">
+                <select
+                  className="select"
+                  value={state.botSkill}
+                  onChange={(e) =>
+                    void setState(
+                      session.id,
+                      { ...state, botSkill: e.target.value as BotSkill },
+                      'lobby',
+                    )
+                  }
+                >
+                  {(Object.keys(BOT_SKILL) as BotSkill[]).map((s) => (
+                    <option key={s} value={s}>{BOT_SKILL[s].label}</option>
+                  ))}
                 </select>
               </Setting>
             </div>
@@ -953,7 +1086,7 @@ function drawPitch(
       ctx.stroke();
     }
 
-    const name = profiles.get(pl.id)?.display_name;
+    const name = isBot(pl.id) ? botName(pl.id) : profiles.get(pl.id)?.display_name;
     if (name) {
       ctx.font = '600 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -1035,6 +1168,36 @@ function drawPitch(
       ctx.fillText(scorer.display_name, midX, midY + 64);
     }
   }
+}
+
+/** The corner marker and progress bar that say "this is not live". */
+function drawReplayBadge(ctx: CanvasRenderingContext2D, width: number, progress: number): void {
+  ctx.save();
+
+  ctx.fillStyle = 'rgba(10, 10, 14, 0.72)';
+  ctx.beginPath();
+  ctx.roundRect(16, 14, 132, 30, 8);
+  ctx.fill();
+
+  // A blinking dot, the way a recording light behaves.
+  const on = Math.floor(progress * 12) % 2 === 0;
+  ctx.beginPath();
+  ctx.arc(34, 29, 5, 0, Math.PI * 2);
+  ctx.fillStyle = on ? '#e0574f' : 'rgba(224, 87, 79, 0.35)';
+  ctx.fill();
+
+  ctx.font = '700 13px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('REPLAY', 48, 34);
+
+  // How far through the clip we are.
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillRect(16, 48, width - 32, 3);
+  ctx.fillStyle = '#e0574f';
+  ctx.fillRect(16, 48, (width - 32) * progress, 3);
+
+  ctx.restore();
 }
 
 function lighten(hex: string): string {

@@ -1,11 +1,12 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { errText, supabase } from '../../../lib/supabase';
 import type { GamePlayer, GameSession, Profile, UUID } from '../../../lib/types';
 import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState } from '../lobby';
 import { useEconomy } from '../../../state/economy';
-import { emptyBoard, winningLine, type Board, type Mark } from './rules';
+import { emptyBoard, winner as boardWinner, winningLine, type Board, type Mark } from './rules';
+import { BOT_ID, DIFFICULTY as TTT_BOT, chooseCell, type Difficulty } from './bot';
 import {
   buildBracket,
   champion,
@@ -33,6 +34,8 @@ interface TttState {
   draws: number;
   game: number;
   bracket: Bracket | null;
+  /** Set when the opponent is the computer. */
+  bot: Difficulty | null;
 }
 
 function readState(s: Record<string, unknown>): TttState {
@@ -48,6 +51,7 @@ function readState(s: Record<string, unknown>): TttState {
     draws: (s.draws as number) ?? 0,
     game: (s.game as number) ?? 1,
     bracket: (s.bracket as Bracket | null) ?? null,
+    bot: (s.bot as Difficulty | null) ?? null,
   };
 }
 
@@ -67,6 +71,7 @@ export function TicTacToeGame({
   const { award } = useEconomy();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const botTimer = useRef<number | null>(null);
   const state = useMemo(() => readState(session.state), [session.state]);
   // Stops two clients both advancing the same finished game.
   const advancedGame = useRef(-1);
@@ -78,7 +83,12 @@ export function TicTacToeGame({
   const line = winningLine(state.board);
   const isHost = session.host_id === me;
 
-  const nameOf = (id: UUID | null) => (id ? profiles.get(id)?.display_name ?? '—' : '—');
+  const nameOf = (id: UUID | null) =>
+    id === BOT_ID
+      ? `Computer (${TTT_BOT[state.bot ?? 'medium'].label})`
+      : id
+        ? profiles.get(id)?.display_name ?? '—'
+        : '—';
   const winnerId = state.winner === 'X' ? state.x : state.winner === 'O' ? state.o : null;
 
   /* ------------------------------------------------------------- start -- */
@@ -98,6 +108,27 @@ export function TicTacToeGame({
         draws: 0,
         game: 1,
         bracket: null,
+      },
+      'active',
+    );
+  };
+
+  const startBot = async (difficulty: Difficulty) => {
+    await setState(
+      session.id,
+      {
+        board: emptyBoard(),
+        turn: 'X',
+        x: me,
+        o: BOT_ID,
+        winner: null,
+        mode: 'series',
+        bestOf: 1,
+        wins: {},
+        draws: 0,
+        game: 1,
+        bracket: null,
+        bot: difficulty,
       },
       'active',
     );
@@ -127,16 +158,59 @@ export function TicTacToeGame({
   };
 
   /* -------------------------------------------------------------- play -- */
+  /** Apply a move locally. Only used against the computer. */
+  const applyLocally = useCallback(
+    async (cell: number, mark: Mark) => {
+      const board = state.board.slice() as Board;
+      board[cell] = mark;
+      const decided = boardWinner(board);
+      await setState(
+        session.id,
+        {
+          ...state,
+          board,
+          turn: mark === 'X' ? 'O' : 'X',
+          winner: decided,
+        },
+        decided ? 'done' : 'active',
+      );
+    },
+    [state, session.id],
+  );
+
   const play = async (cell: number) => {
     if (!myTurn || state.board[cell] !== '' || busy) return;
     setBusy(true);
     setError('');
-    // The database applies the move, so a doctored board pushed from a console
-    // is rejected rather than believed.
-    const { error: e } = await supabase.rpc('ttt_move', { p_session: session.id, p_cell: cell });
-    if (e) setError(errText(e));
+
+    if (state.bot) {
+      // Nobody to cheat but yourself, so the board is kept on the client.
+      await applyLocally(cell, myMark as Mark);
+    } else {
+      // The database applies the move, so a doctored board pushed from a
+      // console is rejected rather than believed.
+      const { error: e } = await supabase.rpc('ttt_move', { p_session: session.id, p_cell: cell });
+      if (e) setError(errText(e));
+    }
     setBusy(false);
   };
+
+  /* ---------------------------------------------------------------- bot -- */
+  useEffect(() => {
+    if (!state.bot || state.winner || session.status !== 'active') return;
+    const botMark: Mark = state.x === BOT_ID ? 'X' : 'O';
+    if (state.turn !== botMark) return;
+
+    // A beat of thought, so it does not answer the instant you click.
+    botTimer.current = window.setTimeout(() => {
+      const cell = chooseCell(state.board, botMark, state.bot ?? 'medium');
+      if (cell !== null) void applyLocally(cell, botMark);
+    }, 480);
+
+    return () => {
+      if (botTimer.current) window.clearTimeout(botTimer.current);
+    };
+  }, [state.bot, state.turn, state.winner, state.board, state.x, session.status, applyLocally]);
 
   /* ------------------------------------------------------------ advance -- */
   const nextGame = async () => {
@@ -149,8 +223,9 @@ export function TicTacToeGame({
     else if (winnerId) wins[winnerId] = (wins[winnerId] ?? 0) + 1;
 
     // Rate the game that just finished. Only the host reports it, and the
-    // database ignores a repeat for the same session anyway.
-    if (isHost && state.x && state.o) {
+    // database ignores a repeat for the same session anyway. Games against
+    // the computer are practice and do not count.
+    if (isHost && !state.bot && state.x && state.o) {
       const loserId = winnerId === state.x ? state.o : state.x;
       void award(
         session.id,
@@ -269,6 +344,18 @@ export function TicTacToeGame({
             <p className="row-sub" style={{ marginTop: 12 }}>
               A knockout draws a bracket, pairs everyone up and advances the winners. Draws are
               replayed, so nobody goes out on one.
+            </p>
+
+            <div className="label" style={{ padding: '16px 0 8px' }}>Or play the computer</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(['easy', 'medium', 'hard'] as Difficulty[]).map((d) => (
+                <button key={d} className="btn btn-sm" onClick={() => void startBot(d)}>
+                  {TTT_BOT[d].label} — {TTT_BOT[d].blurb}
+                </button>
+              ))}
+            </div>
+            <p className="row-sub" style={{ marginTop: 10 }}>
+              On your own. Games against the computer do not affect your rating.
             </p>
           </div>
         ) : (
