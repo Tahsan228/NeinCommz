@@ -19,6 +19,7 @@ import {
   CELEBRATION_TICKS,
   DEFAULT_RULES,
   ORB_RADIUS,
+  resetKickoff,
   NO_INPUT,
   PITCH_PRESETS,
   PLAYER_R,
@@ -88,6 +89,8 @@ interface HaxState {
   series: Series;
   lastResult: { red: number; blue: number; winner: number } | null;
   startedAt: string | null;
+  /** Knocking a ball about on your own: no clock, no score, no rating. */
+  practice: boolean;
 }
 
 function readState(s: Record<string, unknown>): HaxState {
@@ -100,6 +103,7 @@ function readState(s: Record<string, unknown>): HaxState {
     series: (s.series as Series) ?? { bestOf: 1, wins: { red: 0, blue: 0 }, match: 1 },
     lastResult: (s.lastResult as HaxState['lastResult']) ?? null,
     startedAt: (s.startedAt as string | null) ?? null,
+    practice: (s.practice as boolean) ?? false,
   };
 }
 
@@ -305,7 +309,7 @@ export function HaxballGame({
 
   /* -------------------------------------------- host reports the result -- */
   useEffect(() => {
-    if (!isHost || state.phase !== 'playing') return;
+    if (!isHost || state.phase !== 'playing' || state.practice) return;
     const id = window.setInterval(() => {
       const w = worldRef.current;
       if (!w || !w.finished) return;
@@ -585,6 +589,29 @@ export function HaxballGame({
         <canvas ref={canvasRef} width={pitch.w} height={pitch.h} />
       </div>
 
+      {state.practice && (
+        <div className="practice-bar">
+          <span className="pill">Practice</span>
+          <span className="row-sub" style={{ margin: 0 }}>
+            No clock, no score, nothing rated. Have a go at the power system.
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={() => {
+              const w = worldRef.current;
+              if (!w) return;
+              // Straight back to a kickoff, without the whistle and the wait.
+              resetKickoff(w);
+              w.celebrating = 0;
+              w.countdown = 0;
+            }}
+          >
+            <Icon name="undo" size={14} />
+            Reset ball
+          </button>
+        </div>
+      )}
+
       {myBuffs.length > 0 && (
         <div className="buff-row">
           {myBuffs.map((b) => (
@@ -690,9 +717,34 @@ function HaxLobby({
   const start = () =>
     void setState(
       session.id,
-      { ...state, phase: 'playing', startedAt: new Date().toISOString() },
+      { ...state, phase: 'playing', practice: false, startedAt: new Date().toISOString() },
       'active',
     );
+
+  /**
+   * An empty pitch and a ball. No clock, no score limit, and a goal resets
+   * almost immediately instead of playing the full film.
+   */
+  const startPractice = async () => {
+    await setTeam(session.id, me, 0);
+    await setState(
+      session.id,
+      {
+        ...state,
+        phase: 'playing',
+        practice: true,
+        bots: { red: 0, blue: 0 },
+        rules: {
+          ...state.rules,
+          scoreLimit: 0,
+          timeLimitSec: 0,
+          celebrationTicks: 90,
+        },
+        startedAt: new Date().toISOString(),
+      },
+      'active',
+    );
+  };
 
   const canStart =
     red.length + state.bots.red >= 1 && blue.length + state.bots.blue >= 1;
@@ -955,10 +1007,17 @@ function HaxLobby({
             </Setting>
           </div>
 
-          <button className="btn btn-accent" disabled={!canStart} onClick={start}>
-            <Icon name="play" size={15} />
-            {canStart ? 'Start match' : 'Need a player on each team'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="btn btn-accent" disabled={!canStart} onClick={start}>
+              <Icon name="play" size={15} />
+              {canStart ? 'Start match' : 'Need a player on each team'}
+            </button>
+
+            <button className="btn" onClick={() => void startPractice()}>
+              <Icon name="football" size={15} />
+              Practice on your own
+            </button>
+          </div>
         </>
       ) : (
         <div className="row-sub">

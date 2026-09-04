@@ -964,8 +964,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 20px;
+  /* Centred while it fits, top-aligned once it does not.
+     Plain `center` pushes the overflow out of BOTH ends of a scroll
+     container, so a tall settings panel had its end cut off with no way to
+     scroll to it — you had to zoom the browser out to read it. `safe`
+     falls back to flex-start exactly when that would happen; the
+     declaration above it covers browsers that do not know the keyword. */
+  justify-content: flex-start;
+  justify-content: safe center;
+  padding: 20px 20px 32px;
   gap: 16px;
   overflow-y: auto;
 }
@@ -2627,4 +2634,20 @@
   .room-chip {
     max-width: 130px;
   }
+}
+
+/* ------------------------------------------------------------ practice --- */
+
+.practice-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  background: var(--panel-fill);
+  border: 1px solid var(--edge);
+  box-shadow: var(--lift-1);
+  max-width: 100%;
 }

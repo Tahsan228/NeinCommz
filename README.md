@@ -191,7 +191,9 @@ since two people still works — the chains are just shorter.
   feet**, not from holding a key: walking it forward winds up a shot, losing it
   drops everything you had, and the kick key fires the moment there is anything
   to hit — so you can run at a loose ball with it held and strike on contact.
-  Even a bare touch sends the ball a long way. Holding the key pales your disc,
+  Even a bare touch is a proper strike. There is a **practice pitch** too —
+  on your own, no clock, no score and nothing rated, for working out the
+  power system without an audience. Holding the key pales your disc,
   the way it does in the original, and discs carry initials so a crowded box
   stays readable. A **best-of series** tracks match wins. The host runs a 60 Hz physics loop and broadcasts
   snapshots at 30 Hz over Supabase Realtime; everyone else sends key state.
@@ -310,7 +312,7 @@ glow behind the page.
 npm test
 ```
 
-262 tests covering the parts where bugs actually hide: the status engine's
+270 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
@@ -322,8 +324,8 @@ against itself; a Haxball bot must never kick towards its own goal), the
 leaderboard's ordering and its rule that nobody is ever dropped from the table,
 who gets credited with a goal and an assist, what happens to a room when its
 host closes the tab (exactly one client may act on it), what each power-up
-orb actually does, that the replay camera can never look off the pitch, and
-two jsdom tests — one that mounts the whole app and walks through
+orb actually does, that the replay camera can never look off the pitch, which
+collision the replay slows down on, and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 

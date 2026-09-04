@@ -444,3 +444,104 @@ describe('who gets the credit', () => {
     expect(w.goal).toBeNull();
   });
 });
+
+describe('what the replay slows down on', () => {
+  function pitchWith(id: string) {
+    const w = createWorld([{ id, team: 0 }]);
+    w.countdown = 0;
+    return w;
+  }
+
+  it('slows on the strike when the ball went straight in', () => {
+    const w = pitchWith('red1');
+    w.touches = [{ id: 'red1', team: 0, tick: 100 }];
+    w.tick = 140;
+    w.lastBounceTick = -1;
+    expect(describeGoal(w, 0).shotTick).toBe(100);
+  });
+
+  it('slows on the wall when the shot went in off the boards', () => {
+    const w = pitchWith('red1');
+    // Struck at 100, came off a wall at 130 — the bounce is the moment.
+    w.touches = [{ id: 'red1', team: 0, tick: 100 }];
+    w.lastBounceTick = 130;
+    w.tick = 150;
+    expect(describeGoal(w, 0).shotTick).toBe(130);
+  });
+
+  it('still slows on the strike when the bounce came first', () => {
+    const w = pitchWith('red1');
+    // A bounce, then somebody put it away: the strike is the later moment.
+    w.lastBounceTick = 80;
+    w.touches = [{ id: 'red1', team: 0, tick: 120 }];
+    w.tick = 140;
+    expect(describeGoal(w, 0).shotTick).toBe(120);
+  });
+
+  it('records a bounce off the side wall away from the goal', () => {
+    const w = pitchWith('red1');
+    const { left, top } = bounds(w.pitch);
+    // Well above the mouth, heading into the left wall.
+    w.ball.x = left + BALL_R - 1;
+    w.ball.y = top + 40;
+    w.ball.vx = -6;
+    w.ball.vy = 0;
+    step(w, new Map());
+    expect(w.lastBounceTick).toBe(w.tick);
+  });
+
+  it('records a bounce off the top wall', () => {
+    const w = pitchWith('red1');
+    const { top } = bounds(w.pitch);
+    w.ball.x = w.pitch.w / 2;
+    w.ball.y = top + BALL_R - 1;
+    w.ball.vy = -6;
+    w.ball.vx = 0;
+    step(w, new Map());
+    expect(w.lastBounceTick).toBe(w.tick);
+  });
+
+  it('ignores clipping the post, which is not a moment worth slowing on', () => {
+    const w = pitchWith('red1');
+    const { left, goalTop } = bounds(w.pitch);
+    // Right on the post: a bounce here is the frame, not a rebound off a wall.
+    w.ball.x = left + BALL_R - 1;
+    w.ball.y = goalTop - 4;
+    w.ball.vx = -6;
+    w.ball.vy = 0;
+    step(w, new Map());
+    expect(w.lastBounceTick).toBe(-1);
+  });
+
+  it('leaves the bounce unset when the ball has hit nothing', () => {
+    const w = pitchWith('red1');
+    w.ball.x = w.pitch.w / 2;
+    w.ball.y = w.pitch.h / 2;
+    w.ball.vx = 2;
+    w.ball.vy = 0;
+    for (let i = 0; i < 10; i++) step(w, new Map());
+    expect(w.lastBounceTick).toBe(-1);
+  });
+});
+
+describe('practice settings', () => {
+  it('can cut the goal sequence right down', () => {
+    const w = createWorld([{ id: 'a', team: 0 }], {
+      ...DEFAULT_RULES,
+      celebrationTicks: 90,
+      scoreLimit: 0,
+      timeLimitSec: 0,
+    });
+    w.countdown = 0;
+
+    const { right, goalTop, goalBottom } = bounds(w.pitch);
+    w.ball.x = right + BALL_R + 2;
+    w.ball.y = (goalTop + goalBottom) / 2;
+    step(w, new Map());
+
+    expect(w.celebrating).toBe(90);
+    // And with no limits at all, a goal never ends the session.
+    for (let i = 0; i < 400; i++) step(w, new Map());
+    expect(w.finished).toBe(false);
+  });
+});

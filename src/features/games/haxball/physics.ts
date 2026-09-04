@@ -62,6 +62,15 @@ export const PITCH: Pitch = PITCH_PRESETS.normal;
 export const PLAYER_R = 15;
 export const BALL_R = 13;
 
+/** Three seconds at 60Hz, so everyone can find their player before the whistle. */
+export const COUNTDOWN_TICKS = 180;
+
+/**
+ * How long the goal sequence runs: a beat on the scorer, the replay, then the
+ * fade. Long, because it is meant to be watched rather than sat through.
+ */
+export const CELEBRATION_TICKS = 60 * 9;
+
 const PLAYER_MASS = 1;
 const BALL_MASS = 0.55;
 const RESTITUTION = 0.62;
@@ -90,6 +99,11 @@ export interface Rules {
   pitchSize: PitchSize;
   /** Scatter power-up orbs around the pitch. */
   powerUps: boolean;
+  /**
+   * How long the goal sequence runs. Practice cuts it right down: nobody
+   * wants a nine-second film every time they hit the net on their own.
+   */
+  celebrationTicks: number;
 }
 
 // Deliberately sluggish: the old values crossed the pitch in about two
@@ -98,10 +112,10 @@ export const DEFAULT_RULES: Rules = {
   playerAccel: 0.14,
   playerDamping: 0.935,
   ballDamping: 0.99,
-  // A bare touch already sends the ball a long way — power is a bonus for
-  // shepherding it, not the difference between a kick and a nudge.
-  kickMin: 5,
-  kickMax: 11,
+  // A bare touch is a proper strike. Power is a bonus for shepherding the
+  // ball, not the difference between a kick and a nudge.
+  kickMin: 6.5,
+  kickMax: 13,
   // Three seconds of dribbling to reach full power. Fast enough to be worth
   // going for, slow enough that you have to actually protect the ball.
   chargeRate: 1 / 180,
@@ -110,6 +124,7 @@ export const DEFAULT_RULES: Rules = {
   timeLimitSec: 300,
   pitchSize: 'normal',
   powerUps: false,
+  celebrationTicks: CELEBRATION_TICKS,
 };
 
 /**
@@ -127,10 +142,10 @@ export const SPEED_PRESETS: Record<string, number> = {
 
 /** The ceiling a fully-wound shot reaches. The floor is set by kickMin. */
 export const POWER_PRESETS: Record<string, number> = {
-  Softer: 6,
-  Normal: 9,
-  Harder: 12,
-  Cannon: 16,
+  Softer: 9,
+  Normal: 13,
+  Harder: 16,
+  Cannon: 18,
 };
 
 export const KICK_RANGE = 8;
@@ -204,6 +219,12 @@ export interface World {
   goal: GoalInfo | null;
   /** Power-up orbs, empty unless the mode is switched on. */
   orbs: Orb[];
+  /**
+   * When the ball last came off a wall. The replay slows on whichever came
+   * last, a touch or a bounce, so a shot off the boards is slowed at the
+   * board rather than back at the player who hit it.
+   */
+  lastBounceTick: number;
 }
 
 export interface Touch {
@@ -228,17 +249,14 @@ export interface GoalInfo {
   y: number;
 }
 
-/** Three seconds at 60Hz, so everyone can find their player before the whistle. */
-export const COUNTDOWN_TICKS = 180;
-
-/**
- * How long the goal sequence runs: a beat on the scorer, the replay, then the
- * fade. Long, because it is meant to be watched rather than sat through.
- */
-export const CELEBRATION_TICKS = 60 * 9;
-
 /** A touch is only an assist if it was recent enough to have set the goal up. */
 const ASSIST_WINDOW_TICKS = 60 * 8;
+
+/**
+ * Close to a post, a wall bounce is really a post — and a post is not the
+ * moment anyone wants to see slowed down.
+ */
+const POST_ZONE = 26;
 
 /**
  * Is the ball close enough for this player to strike it?
@@ -336,6 +354,7 @@ export function createWorld(
     touches: [],
     goal: null,
     orbs: rules.powerUps ? spawnOrbs(pitch) : [],
+    lastBounceTick: -1,
   };
 }
 
@@ -544,12 +563,29 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
   for (const p of w.players) confinePlayer(p, w.pitch);
 
+  // A reflection is a bounce: compare the sign of the velocity either side of
+  // the walls check rather than teaching confineBall to report on itself.
+  const beforeVx = w.ball.vx;
+  const beforeVy = w.ball.vy;
+
   const scored = confineBall(w.ball, w.pitch);
+
+  const { goalTop, goalBottom } = bounds(w.pitch);
+  const nearPost =
+    Math.abs(w.ball.y - goalTop) < POST_ZONE || Math.abs(w.ball.y - goalBottom) < POST_ZONE;
+
+  const flippedX = beforeVx !== 0 && Math.sign(w.ball.vx) !== Math.sign(beforeVx);
+  const flippedY = beforeVy !== 0 && Math.sign(w.ball.vy) !== Math.sign(beforeVy);
+
+  // A side-wall bounce right beside the mouth is the post, and clipping the
+  // post is not the moment the replay should linger on.
+  if (flippedY || (flippedX && !nearPost)) w.lastBounceTick = w.tick;
+
   if (scored !== null) {
     if (scored === 0) w.score.red++;
     else w.score.blue++;
     w.lastScorer = scored;
-    w.celebrating = CELEBRATION_TICKS;
+    w.celebrating = w.rules.celebrationTicks ?? CELEBRATION_TICKS;
     w.goal = describeGoal(w, scored);
   }
 
@@ -598,7 +634,9 @@ export function describeGoal(w: World, team: 0 | 1): GoalInfo {
     team,
     assist,
     ownGoal,
-    shotTick: last?.tick ?? w.tick,
+    // Whichever happened last: the strike, or the wall it came off. A bounce
+    // shot should be slowed at the board, not back where it was struck.
+    shotTick: Math.max(last?.tick ?? w.tick, w.lastBounceTick),
     x: w.ball.x,
     y: w.ball.y,
   };
