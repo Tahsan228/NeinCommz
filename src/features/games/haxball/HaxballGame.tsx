@@ -4,6 +4,13 @@ import type { GamePlayer, GameSession, Profile, UUID } from '../../../lib/types'
 import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState, setTeam } from '../lobby';
+import { useEconomy } from '../../../state/economy';
+import {
+  celebrationText,
+  paintGoalEffect,
+  paintTrail,
+  type TrailPoint,
+} from '../../economy/cosmetics';
 import {
   BALL_R,
   DEFAULT_RULES,
@@ -89,6 +96,7 @@ export function HaxballGame({
 }) {
   const state = useMemo(() => readState(session.state), [session.state]);
   const isHost = session.host_id === me;
+  const { award, equippedOf } = useEconomy();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const worldRef = useRef<World | null>(null);
@@ -97,6 +105,10 @@ export function HaxballGame({
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const reportedRef = useRef<number>(-1);
   const scoreRef = useRef({ red: 0, blue: 0 });
+  /** Recent ball positions, so a trail has something to draw along. */
+  const trailRef = useRef<TrailPoint[]>([]);
+  /** Frame the current celebration started on, for effect timing. */
+  const celebrateFromRef = useRef(0);
 
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [clock, setClock] = useState(0);
@@ -251,9 +263,26 @@ export function HaxballGame({
         },
         'active',
       );
+
+      // Rate the match. Everyone on the pitch is scored against the other
+      // side; goals they were part of pay the per-score bonus. Only the host
+      // reports, and the database refuses a second report for this session.
+      void award(
+        session.id,
+        onPitch.map((p) => ({
+          profile_id: p.profile_id,
+          outcome:
+            w.winner === null
+              ? ('draw' as const)
+              : p.team === w.winner
+                ? ('win' as const)
+                : ('loss' as const),
+          score: p.team === 0 ? w.score.red : w.score.blue,
+        })),
+      );
     }, 400);
     return () => window.clearInterval(id);
-  }, [isHost, state, session.id]);
+  }, [isHost, state, session.id, onPitch, award]);
 
   /* --------------------------------------------------- clock + my charge - */
   useEffect(() => {
@@ -279,12 +308,34 @@ export function HaxballGame({
       raf = requestAnimationFrame(draw);
       const w = worldRef.current;
       if (!w) return;
-      drawPitch(ctx, w, me, profiles);
+
+      // Ball history for the trail. Kept here rather than in the world so it
+      // never has to survive a network round trip.
+      if (w.countdown === 0 && w.celebrating === 0) {
+        const trail = trailRef.current;
+        trail.push({ x: w.ball.x, y: w.ball.y, age: 1 });
+        if (trail.length > 20) trail.shift();
+        trail.forEach((pt, i) => (pt.age = (i + 1) / trail.length));
+      } else {
+        trailRef.current = [];
+      }
+
+      if (w.celebrating > 0 && celebrateFromRef.current === 0) {
+        celebrateFromRef.current = w.celebrating;
+      } else if (w.celebrating === 0) {
+        celebrateFromRef.current = 0;
+      }
+
+      drawPitch(ctx, w, me, profiles, {
+        trail: trailRef.current,
+        equippedOf,
+        celebrateTotal: celebrateFromRef.current,
+      });
     };
 
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [state.phase, me, profiles]);
+  }, [state.phase, me, profiles, equippedOf]);
 
   /* ============================================================ lobby === */
   if (state.phase === 'lobby') {
@@ -730,11 +781,19 @@ function Setting({ label, children }: { label: string; children: React.ReactNode
 
 /* ============================================================ drawing ==== */
 
+interface Cosmetics {
+  trail: TrailPoint[];
+  equippedOf: (id: UUID) => Record<string, string>;
+  /** How many celebration frames there were in total, for effect progress. */
+  celebrateTotal: number;
+}
+
 function drawPitch(
   ctx: CanvasRenderingContext2D,
   w: World,
   me: UUID,
   profiles: Map<UUID, Profile>,
+  cosmetics?: Cosmetics,
 ): void {
   const p = w.pitch;
   const { left, right, top, bottom, goalTop, goalBottom } = bounds(p);
@@ -827,6 +886,19 @@ function drawPitch(
     ctx.lineTo(x + dir * depth, goalBottom);
     ctx.lineTo(x, goalBottom);
     ctx.stroke();
+  }
+
+  // The ball's trail belongs to whoever touched it last, not to whoever is
+  // watching, so both the style and the colour come from that player.
+  if (cosmetics && w.lastTouch && w.celebrating === 0 && w.countdown === 0) {
+    const owner = profiles.get(w.lastTouch);
+    paintTrail(
+      cosmetics.equippedOf(w.lastTouch).trail,
+      ctx,
+      cosmetics.trail,
+      owner?.accent_color ?? '#e0574f',
+      w.tick,
+    );
   }
 
   // The aim guide is drawn only while the local player is charging AND the
@@ -930,12 +1002,36 @@ function drawPitch(
   }
 
   if (w.celebrating > 0) {
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillStyle = 'rgba(0,0,0,0.42)';
     ctx.fillRect(0, 0, p.w, p.h);
+
+    const scorer = w.lastTouch ? profiles.get(w.lastTouch) : undefined;
+    const worn = cosmetics && w.lastTouch ? cosmetics.equippedOf(w.lastTouch) : {};
+    const total = cosmetics?.celebrateTotal || 1;
+    // Effects run forwards, but `celebrating` counts down.
+    const t = 1 - w.celebrating / total;
+
+    if (cosmetics) {
+      paintGoalEffect(worn.goalfx, ctx, p.w, p.h, t, scorer?.accent_color ?? '#e0574f');
+    }
+
     ctx.font = '700 46px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = w.lastScorer === 0 ? TEAM_COLOR[0] : TEAM_COLOR[1];
-    ctx.fillText('GOAL', midX, midY + 14);
+    ctx.fillText('GOAL', midX, midY);
+
+    const shout = celebrationText(worn.celebration);
+    if (shout) {
+      ctx.font = '700 24px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillText(shout, midX, midY + 38);
+    }
+
+    if (scorer) {
+      ctx.font = '600 13px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillText(scorer.display_name, midX, midY + 64);
+    }
   }
 }
 

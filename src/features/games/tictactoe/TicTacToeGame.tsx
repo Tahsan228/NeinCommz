@@ -4,6 +4,7 @@ import type { GamePlayer, GameSession, Profile, UUID } from '../../../lib/types'
 import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState } from '../lobby';
+import { useEconomy } from '../../../state/economy';
 import { emptyBoard, winningLine, type Board, type Mark } from './rules';
 import {
   buildBracket,
@@ -63,6 +64,7 @@ export function TicTacToeGame({
   profiles: Map<UUID, Profile>;
   me: UUID;
 }) {
+  const { award } = useEconomy();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const state = useMemo(() => readState(session.state), [session.state]);
@@ -145,6 +147,24 @@ export function TicTacToeGame({
     let draws = state.draws;
     if (state.winner === 'draw') draws++;
     else if (winnerId) wins[winnerId] = (wins[winnerId] ?? 0) + 1;
+
+    // Rate the game that just finished. Only the host reports it, and the
+    // database ignores a repeat for the same session anyway.
+    if (isHost && state.x && state.o) {
+      const loserId = winnerId === state.x ? state.o : state.x;
+      void award(
+        session.id,
+        winnerId
+          ? [
+              { profile_id: winnerId, outcome: 'win', score: 1 },
+              { profile_id: loserId, outcome: 'loss', score: 0 },
+            ]
+          : [
+              { profile_id: state.x, outcome: 'draw', score: 0 },
+              { profile_id: state.o, outcome: 'draw', score: 0 },
+            ],
+      );
+    }
 
     if (state.mode === 'knockout' && state.bracket) {
       // A draw is replayed rather than resolved, so nobody goes out on one.

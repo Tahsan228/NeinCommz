@@ -4,6 +4,8 @@ import type { UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { presenceOf, useDirectory } from '../../state/directory';
 import { useRooms } from '../../state/rooms';
+import { useEconomy } from '../../state/economy';
+import { isRated, rankFor } from '../economy/elo';
 import { Avatar, Modal } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { resolveStatus } from '../status/statusEngine';
@@ -15,6 +17,7 @@ export function ProfileCard({ id, onClose }: { id: UUID; onClose: () => void }) 
   const { profile: me, prefs } = useSession();
   const { byId, blocksFor, presence } = useDirectory();
   const { openDm } = useRooms();
+  const { statFor } = useEconomy();
 
   const [messageCount, setMessageCount] = useState<number | null>(null);
   const person = byId.get(id);
@@ -116,8 +119,50 @@ export function ProfileCard({ id, onClose }: { id: UUID; onClose: () => void }) 
         ))}
       </div>
 
+      <div className="label">Ratings</div>
+      <div className="group" style={{ marginBottom: 16 }}>
+        {(['haxball', 'tictactoe', 'gartic'] as const).map((g) => {
+          const st = statFor(id, g);
+          const rank = st && isRated(g) ? rankFor(st.elo) : null;
+          return (
+            <div className="row" key={g} style={{ minHeight: 46 }}>
+              <div className="row-main">
+                <div className="row-title" style={{ fontSize: 13, textTransform: 'capitalize' }}>
+                  {g === 'tictactoe' ? 'Tic-Tac-Toe' : g}
+                </div>
+                {st && (
+                  <div className="row-sub">
+                    {st.won}W · {st.lost}L · {st.drawn}D
+                    {st.best_streak > 1 && ` · best streak ${st.best_streak}`}
+                  </div>
+                )}
+              </div>
+              {!st ? (
+                <span className="row-sub">Not played</span>
+              ) : rank ? (
+                <span className="lb-elo">
+                  <b>{st.elo}</b>
+                  <span style={{ color: rank.color }}>{rank.name}</span>
+                </span>
+              ) : (
+                <b>{st.played} played</b>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       <div className="label">Stats</div>
       <div className="group">
+        <div className="row" style={{ minHeight: 46 }}>
+          <div className="row-main">
+            <div className="row-title" style={{ fontSize: 13 }}>Coins</div>
+          </div>
+          <span className="coin-pill">
+            <Icon name="circle" size={12} />
+            {(person.coins ?? 0).toLocaleString()}
+          </span>
+        </div>
         <div className="row" style={{ minHeight: 46 }}>
           <div className="row-main">
             <div className="row-title" style={{ fontSize: 13 }}>Messages sent</div>
@@ -131,10 +176,6 @@ export function ProfileCard({ id, onClose }: { id: UUID; onClose: () => void }) 
           <b>{new Date(person.created_at).toLocaleDateString([], { month: 'long', year: 'numeric' })}</b>
         </div>
       </div>
-
-      <p className="row-sub" style={{ marginTop: 12 }}>
-        Rank, ELO and coins land with the leaderboards.
-      </p>
     </Modal>
   );
 }

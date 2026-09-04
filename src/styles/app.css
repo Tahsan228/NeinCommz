@@ -1799,3 +1799,217 @@
 .status-card-btn:hover {
   background: var(--row-hover);
 }
+
+/* ============================================================ economy ==== */
+
+.coin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, #e8c65a, #c9992c);
+  color: #2a1f05;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  flex: none;
+}
+.coin-pill-btn {
+  transition: transform var(--fast), box-shadow var(--fast);
+}
+.coin-pill-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.coin-pill-btn:active {
+  transform: translateY(1px);
+}
+
+/* ----------------------------------------------------------------- shop -- */
+
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.shop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--r-card);
+  background: var(--row);
+  border: 1px solid var(--edge);
+  box-shadow: var(--lift-1);
+  border-top: 2px solid var(--rarity, var(--edge));
+}
+.shop-card[data-on='true'] {
+  box-shadow: var(--lift-1), inset 0 0 0 1px var(--accent);
+}
+
+.cosmetic-preview {
+  width: 100%;
+  height: auto;
+  border-radius: 9px;
+  display: block;
+  box-shadow: var(--inset);
+}
+
+.shop-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.shop-rarity {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--rarity, var(--ink-faint));
+}
+
+.shop-blurb {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.shop-bought {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-card);
+  background: rgba(10, 10, 14, 0.7);
+  color: #4fd695;
+  font-weight: 700;
+  font-size: 15px;
+  animation: fade var(--med) both;
+}
+
+/* --------------------------------------------------------- leaderboards -- */
+
+.seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border-radius: var(--r-control);
+  background: var(--sunken);
+  box-shadow: var(--inset);
+}
+.seg button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink-faint);
+  transition: background var(--fast), color var(--fast);
+}
+.seg button:hover {
+  color: var(--ink);
+}
+.seg button[data-on='true'] {
+  background: var(--control-fill);
+  color: var(--ink);
+  box-shadow: var(--lift-1);
+}
+
+.lb {
+  display: flex;
+  flex-direction: column;
+}
+
+.lb-head,
+.lb-row {
+  display: grid;
+  grid-template-columns: 34px 1fr 120px 78px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.lb-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--ink-label);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.lb-row {
+  border-radius: var(--r-row);
+}
+.lb-row + .lb-row {
+  border-top: 1px solid var(--hairline);
+}
+.lb-row[data-me='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.lb-pos {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--ink-faint);
+  text-align: center;
+}
+.lb-pos[data-top='true'] {
+  color: var(--accent);
+}
+
+.lb-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lb-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-top: 1px;
+}
+
+.lb-elo {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+.lb-elo b {
+  font-size: 15px;
+}
+
+.delta-up { color: #4fd695; font-weight: 650; }
+.delta-down { color: #ff8b83; font-weight: 650; }
+
+@media (max-width: 620px) {
+  .lb-head,
+  .lb-row {
+    grid-template-columns: 28px 1fr 92px;
+  }
+  .lb-head > :last-child,
+  .lb-row > :last-child {
+    display: none;
+  }
+}

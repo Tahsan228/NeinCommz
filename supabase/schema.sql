@@ -523,3 +523,348 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ============================================================== economy ====
+-- Ratings, coins, a shop and a locker.
+
+alter table profiles add column if not exists coins int not null default 250;
+-- What is currently worn: {"trail": "...", "goalfx": "...", "celebration": "..."}
+alter table profiles add column if not exists equipped jsonb not null default '{}'::jsonb;
+
+create table if not exists game_stats (
+  profile_id  uuid not null references profiles on delete cascade,
+  game        text not null,
+  elo         int  not null default 1000,
+  played      int  not null default 0,
+  won         int  not null default 0,
+  lost        int  not null default 0,
+  drawn       int  not null default 0,
+  score_for   int  not null default 0,
+  streak      int  not null default 0,
+  best_streak int  not null default 0,
+  updated_at  timestamptz not null default now(),
+  primary key (profile_id, game)
+);
+
+-- One row per player per finished match. This is what makes "today" and "this
+-- week" leaderboards possible at all: aggregate stats have no dates in them.
+create table if not exists match_results (
+  id         uuid primary key default gen_random_uuid(),
+  session_id uuid not null references game_sessions on delete cascade,
+  profile_id uuid not null references profiles on delete cascade,
+  game       text not null,
+  outcome    text not null,           -- win | loss | draw
+  elo_before int not null default 1000,
+  elo_after  int not null default 1000,
+  elo_delta  int not null default 0,
+  coins      int not null default 0,
+  score      int not null default 0,
+  created_at timestamptz not null default now(),
+  -- Awarding one session twice is the obvious way this goes wrong, so the
+  -- database refuses rather than trusting every client to behave.
+  unique (session_id, profile_id)
+);
+create index if not exists match_results_when_idx on match_results (created_at desc);
+create index if not exists match_results_who_idx on match_results (profile_id, game);
+
+-- The catalogue lives here so prices are server-side truth; how each item
+-- actually looks is behaviour, and lives in the client.
+create table if not exists shop_items (
+  id         text primary key,
+  name       text not null,
+  kind       text not null,           -- trail | goalfx | celebration
+  price      int  not null,
+  rarity     text not null default 'common',
+  is_default boolean not null default false,
+  blurb      text
+);
+
+create table if not exists inventory (
+  profile_id  uuid not null references profiles on delete cascade,
+  item_id     text not null references shop_items on delete cascade,
+  acquired_at timestamptz not null default now(),
+  primary key (profile_id, item_id)
+);
+
+insert into shop_items (id, name, kind, price, rarity, is_default, blurb) values
+  ('trail_none',      'No trail',        'trail',       0,    'common',    true,  'Clean and quiet.'),
+  ('trail_comet',     'Comet',           'trail',       120,  'common',    false, 'A soft tail that fades behind the ball.'),
+  ('trail_ember',     'Ember',           'trail',       180,  'common',    false, 'Warm sparks in your accent colour.'),
+  ('trail_frost',     'Frost',           'trail',       180,  'common',    false, 'Pale blue crystals.'),
+  ('trail_ink',       'Ink',             'trail',       260,  'rare',      false, 'A heavy black smear.'),
+  ('trail_rainbow',   'Rainbow',         'trail',       420,  'rare',      false, 'Cycles the whole spectrum.'),
+  ('trail_glitch',    'Glitch',          'trail',       650,  'epic',      false, 'Stutters and offsets as it moves.'),
+  ('trail_starfield', 'Starfield',       'trail',       900,  'legendary', false, 'Leaves little stars behind.'),
+
+  ('fx_none',         'No effect',       'goalfx',      0,    'common',    true,  'Just the word GOAL.'),
+  ('fx_confetti',     'Confetti',        'goalfx',      150,  'common',    false, 'A burst of paper.'),
+  ('fx_shockwave',    'Shockwave',       'goalfx',      220,  'common',    false, 'A ring that expands from the net.'),
+  ('fx_fireworks',    'Fireworks',       'goalfx',      380,  'rare',      false, 'Three shells, staggered.'),
+  ('fx_flames',       'Flames',          'goalfx',      480,  'rare',      false, 'The goal mouth catches fire.'),
+  ('fx_blackhole',    'Black hole',      'goalfx',      780,  'epic',      false, 'Everything gets pulled in for a moment.'),
+  ('fx_aurora',       'Aurora',          'goalfx',      1100, 'legendary', false, 'Curtains of light across the pitch.'),
+
+  ('cel_none',        'Nothing',         'celebration', 0,    'common',    true,  'Say nothing. Very cool.'),
+  ('cel_gg',          'GG',              'celebration', 80,   'common',    false, 'Gracious. Suspiciously so.'),
+  ('cel_easy',        'Too easy',        'celebration', 130,  'common',    false, 'Make friends fast.'),
+  ('cel_wow',         'WOW',             'celebration', 130,  'common',    false, 'Genuine astonishment.'),
+  ('cel_nutmeg',      'Nutmeg!',         'celebration', 200,  'rare',      false, 'Only fair if it actually was one.'),
+  ('cel_worldclass',  'World class',     'celebration', 340,  'rare',      false, 'Modesty is overrated.'),
+  ('cel_siuu',        'SIUUU',           'celebration', 520,  'epic',      false, 'You know the one.'),
+  ('cel_goat',        'Simply the GOAT', 'celebration', 950,  'legendary', false, 'The final word.')
+on conflict (id) do update
+  set name = excluded.name,
+      kind = excluded.kind,
+      price = excluded.price,
+      rarity = excluded.rarity,
+      is_default = excluded.is_default,
+      blurb = excluded.blurb;
+
+-- Everyone owns the free defaults from the moment they exist.
+insert into inventory (profile_id, item_id)
+select p.id, s.id from profiles p cross join shop_items s where s.is_default
+on conflict do nothing;
+
+create or replace function grant_default_items()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+begin
+  insert into inventory (profile_id, item_id)
+  select new.id, s.id from shop_items s where s.is_default
+  on conflict do nothing;
+  return new;
+end $fn$;
+
+drop trigger if exists on_profile_created_grant_items on profiles;
+create trigger on_profile_created_grant_items
+  after insert on profiles
+  for each row execute function grant_default_items();
+
+alter table game_stats    enable row level security;
+alter table match_results enable row level security;
+alter table shop_items    enable row level security;
+alter table inventory     enable row level security;
+
+do $pol$
+declare t text;
+begin
+  foreach t in array array['game_stats','match_results','shop_items','inventory']
+  loop
+    execute format('drop policy if exists %I on %I', t || '_read', t);
+    execute format(
+      'create policy %I on %I for select to authenticated using (true)',
+      t || '_read', t);
+  end loop;
+end $pol$;
+
+-- Deliberately no write policies on any of the four. Ratings, coins and
+-- purchases all go through the security-definer functions below, so a client
+-- cannot simply set its own rating to 3000 or hand itself the shop.
+
+-- --------------------------------------------------------- rating + payout
+-- Mirrors src/features/economy/elo.ts. Kept in the database because the
+-- client that reports a result is also the client that benefits from it.
+create or replace function elo_k(p_played int, p_elo int)
+returns int language sql immutable as $fn$
+  select case when p_played < 10 then 40 when p_elo >= 1600 then 16 else 24 end;
+$fn$;
+
+create or replace function elo_delta(p_elo int, p_opp int, p_outcome text, p_played int)
+returns int
+language plpgsql
+immutable
+as $fn$
+declare
+  expected numeric;
+  actual   numeric;
+  raw      numeric;
+  out_val  int;
+begin
+  expected := 1.0 / (1.0 + power(10.0, (p_opp - p_elo) / 400.0));
+  actual   := case p_outcome when 'win' then 1.0 when 'draw' then 0.5 else 0.0 end;
+  raw      := elo_k(p_played, p_elo) * (actual - expected);
+
+  -- Round away from zero, so a narrow win is never worth exactly nothing.
+  out_val := case when raw > 0 then ceil(raw) else floor(raw) end;
+  if p_outcome = 'win'  and out_val <  1 then out_val :=  1; end if;
+  if p_outcome = 'loss' and out_val > -1 then out_val := -1; end if;
+  return out_val;
+end $fn$;
+
+/*
+ * Record a finished match.
+ *
+ * p_outcomes is [{"profile_id": uuid, "outcome": "win|loss|draw", "score": int}].
+ * Every player is rated against the average of everyone else, which is the
+ * usual way to fold a team into one number. Unrated games (Gartic) still earn
+ * coins and stats, they just do not move a rating.
+ *
+ * Idempotent: the unique (session_id, profile_id) constraint means a second
+ * call for the same session does nothing at all.
+ */
+create or replace function award_match(p_session uuid, p_outcomes jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  s          game_sessions%rowtype;
+  rated      boolean;
+  entry      jsonb;
+  pid        uuid;
+  outcome    text;
+  score      int;
+  cur_elo    int;
+  cur_played int;
+  opp_elo    numeric;
+  delta      int;
+  coins_won  int;
+  results    jsonb := '[]'::jsonb;
+begin
+  select * into s from game_sessions where id = p_session;
+  if not found then raise exception 'no such session'; end if;
+
+  -- Already awarded? Then this is a duplicate report; do nothing.
+  if exists (select 1 from match_results where session_id = p_session) then
+    return '[]'::jsonb;
+  end if;
+
+  rated := s.game in ('tictactoe', 'haxball', 'chess');
+
+  for entry in select * from jsonb_array_elements(p_outcomes)
+  loop
+    pid     := (entry->>'profile_id')::uuid;
+    outcome := coalesce(entry->>'outcome', 'draw');
+    score   := coalesce((entry->>'score')::int, 0);
+
+    if outcome not in ('win', 'loss', 'draw') then
+      raise exception 'bad outcome %', outcome;
+    end if;
+
+    insert into game_stats (profile_id, game) values (pid, s.game)
+    on conflict (profile_id, game) do nothing;
+
+    select elo, played into cur_elo, cur_played
+      from game_stats where profile_id = pid and game = s.game;
+
+    -- Everyone else in this match, averaged.
+    select coalesce(avg(gs.elo), cur_elo) into opp_elo
+      from jsonb_array_elements(p_outcomes) o
+      join game_stats gs
+        on gs.profile_id = (o->>'profile_id')::uuid and gs.game = s.game
+     where (o->>'profile_id')::uuid <> pid;
+
+    delta := case when rated then elo_delta(cur_elo, round(opp_elo)::int, outcome, cur_played)
+                  else 0 end;
+
+    coins_won := case outcome when 'win' then 60 when 'draw' then 30 else 15 end
+                 + greatest(score, 0) * 10;
+
+    insert into match_results
+      (session_id, profile_id, game, outcome, elo_before, elo_after, elo_delta, coins, score)
+    values
+      (p_session, pid, s.game, outcome, cur_elo, greatest(100, cur_elo + delta), delta,
+       coins_won, score);
+
+    update game_stats set
+      elo         = greatest(100, elo + delta),
+      played      = played + 1,
+      won         = won   + case when outcome = 'win'  then 1 else 0 end,
+      lost        = lost  + case when outcome = 'loss' then 1 else 0 end,
+      drawn       = drawn + case when outcome = 'draw' then 1 else 0 end,
+      score_for   = score_for + greatest(score, 0),
+      streak      = case when outcome = 'win' then streak + 1 else 0 end,
+      best_streak = greatest(best_streak,
+                             case when outcome = 'win' then streak + 1 else 0 end),
+      updated_at  = now()
+    where profile_id = pid and game = s.game;
+
+    update profiles set coins = coins + coins_won where id = pid;
+
+    results := results || jsonb_build_object(
+      'profile_id', pid, 'elo_delta', delta, 'coins', coins_won);
+  end loop;
+
+  return results;
+end $fn$;
+
+grant execute on function award_match(uuid, jsonb) to authenticated;
+
+-- ------------------------------------------------------------ shop + locker
+create or replace function purchase(p_item text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  me    uuid := auth.uid();
+  item  shop_items%rowtype;
+  purse int;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+
+  select * into item from shop_items where id = p_item;
+  if not found then raise exception 'no such item'; end if;
+
+  if exists (select 1 from inventory where profile_id = me and item_id = p_item) then
+    return jsonb_build_object('ok', true, 'already', true);
+  end if;
+
+  select coins into purse from profiles where id = me for update;
+  if purse < item.price then
+    raise exception 'not enough coins';
+  end if;
+
+  update profiles set coins = coins - item.price where id = me;
+  insert into inventory (profile_id, item_id) values (me, p_item);
+
+  return jsonb_build_object('ok', true, 'coins', purse - item.price);
+end $fn$;
+
+grant execute on function purchase(text) to authenticated;
+
+create or replace function equip_item(p_kind text, p_item text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then raise exception 'not signed in'; end if;
+
+  if not exists (
+    select 1 from inventory i join shop_items s on s.id = i.item_id
+    where i.profile_id = me and i.item_id = p_item and s.kind = p_kind
+  ) then
+    raise exception 'you do not own that';
+  end if;
+
+  update profiles
+     set equipped = coalesce(equipped, '{}'::jsonb) || jsonb_build_object(p_kind, p_item)
+   where id = me;
+
+  return jsonb_build_object('ok', true);
+end $fn$;
+
+grant execute on function equip_item(text, text) to authenticated;
+
+do $pub$
+declare t text;
+begin
+  foreach t in array array['game_stats','match_results','inventory']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $pub$;

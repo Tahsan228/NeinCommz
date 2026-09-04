@@ -20,6 +20,8 @@ import { ChatColumn } from './features/chat/ChatColumn';
 import { GamesPanel } from './features/games/GamesPanel';
 import { StatusBoard } from './features/status/StatusBoard';
 import { QuickStatus } from './features/status/QuickStatus';
+import { Shop } from './features/economy/Shop';
+import { Leaderboards } from './features/economy/Leaderboards';
 import { SettingsModal } from './features/settings/SettingsModal';
 
 export default function App() {
@@ -71,6 +73,8 @@ function Home() {
   const { profile, prefs } = useSession();
   const { online } = useDirectory();
   const [settings, setSettings] = useState(false);
+  const [shop, setShop] = useState(false);
+  const [boards, setBoards] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -94,6 +98,20 @@ function Home() {
         {/* Changing what you're up to is the most frequent thing anyone does
             here, so it sits in the corner rather than inside settings. */}
         <QuickStatus />
+
+        <button
+          className="btn btn-ghost btn-icon"
+          title="Leaderboards"
+          aria-label="Leaderboards"
+          onClick={() => setBoards(true)}
+        >
+          <Icon name="sparkle" size={17} />
+        </button>
+
+        <button className="coin-pill coin-pill-btn" title="Shop" onClick={() => setShop(true)}>
+          <Icon name="circle" size={13} />
+          {profile.coins.toLocaleString()}
+        </button>
 
         <button className="me-chip" onClick={() => setSettings(true)} title="Settings">
           <Avatar
@@ -123,6 +141,8 @@ function Home() {
       </div>
 
       {settings && <SettingsModal onClose={() => setSettings(false)} />}
+      {shop && <Shop onClose={() => setShop(false)} />}
+      {boards && <Leaderboards onClose={() => setBoards(false)} />}
       <ToastHost />
     </div>
   );

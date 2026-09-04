@@ -4,6 +4,7 @@ import type { DrawOp, GamePlayer, GameSession, GarticRound, Profile, UUID } from
 import { Avatar } from '../../../components/ui';
 import { Icon } from '../../../components/Icon';
 import { setState } from '../lobby';
+import { useEconomy } from '../../../state/economy';
 import {
   chainForAuthor,
   isComplete,
@@ -67,6 +68,7 @@ export function GarticGame({
   me: UUID;
 }) {
   const state = useMemo(() => readState(session.state), [session.state]);
+  const { award } = useEconomy();
   const [rounds, setRounds] = useState<GarticRound[]>([]);
   const [text, setText] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -207,12 +209,20 @@ export function GarticGame({
           : { ...state, step: nextStep, startedAt: new Date().toISOString() },
         done ? 'done' : 'active',
       );
+
+      // Gartic has no winner, so everyone who saw it through is paid the same.
+      if (done) {
+        void award(
+          session.id,
+          order.map((id) => ({ profile_id: id, outcome: 'draw' as const, score: 1 })),
+        );
+      }
     };
 
     check();
     const id = window.setInterval(check, 500);
     return () => window.clearInterval(id);
-  }, [isHost, state, doneThisStep, n, limit, session.id]);
+  }, [isHost, state, doneThisStep, n, limit, session.id, order, award]);
 
   const nameOf = (id: UUID) => profiles.get(id)?.display_name ?? 'Someone';
 

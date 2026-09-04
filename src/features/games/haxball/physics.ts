@@ -146,6 +146,11 @@ export interface World {
   winner: 0 | 1 | null;
   /** Frames of pre-kickoff countdown left. Nothing moves while this runs. */
   countdown: number;
+  /**
+   * Who touched the ball last. Cosmetics belong to a person, so the trail and
+   * the goal effect follow the ball's owner rather than whoever is watching.
+   */
+  lastTouch: string | null;
 }
 
 /** Three seconds at 60Hz, so everyone can find their player before the whistle. */
@@ -229,6 +234,7 @@ export function createWorld(
     finished: false,
     winner: null,
     countdown: COUNTDOWN_TICKS,
+    lastTouch: null,
   };
 }
 
@@ -313,6 +319,7 @@ export function step(w: World, inputs: Map<string, Input>): void {
         w.ball.vx += p.aimX * power;
         w.ball.vy += p.aimY * power;
         p.cooldown = KICK_COOLDOWN;
+        w.lastTouch = p.id;
       }
     }
   }
@@ -337,7 +344,8 @@ export function step(w: World, inputs: Map<string, Input>): void {
     for (let j = i + 1; j < w.players.length; j++) {
       collide(w.players[i], w.players[j]);
     }
-    collide(w.players[i], w.ball);
+    // A bump counts as a touch too, not only a deliberate kick.
+    if (collide(w.players[i], w.ball)) w.lastTouch = w.players[i].id;
   }
 
   for (const p of w.players) confinePlayer(p, w.pitch);
@@ -464,6 +472,8 @@ export interface Snapshot {
   c: number;
   /** countdown ticks remaining */
   k: number;
+  /** last player to touch the ball, so cosmetics follow its owner */
+  lt: string | null;
   /** finished flag + winner, so clients can show the result without guessing */
   f: 0 | 1;
   w: number;
@@ -487,6 +497,7 @@ export function snapshot(w: World): Snapshot {
     s: [w.score.red, w.score.blue],
     c: w.celebrating,
     k: w.countdown,
+    lt: w.lastTouch,
     f: w.finished ? 1 : 0,
     w: w.winner === null ? -1 : w.winner,
   };
@@ -502,6 +513,7 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.score.blue = s.s[1];
   w.celebrating = s.c;
   w.countdown = s.k ?? 0;
+  w.lastTouch = s.lt ?? null;
   w.finished = s.f === 1;
   w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 

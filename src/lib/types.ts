@@ -47,6 +47,10 @@ export interface Profile {
   accent_color: string;
   has_recovery: boolean;
   bio: string | null;
+  /** Spendable currency, awarded by award_match() in the database. */
+  coins: number;
+  /** Currently worn cosmetics, keyed by kind: trail / goalfx / celebration. */
+  equipped: Record<string, string>;
   status_text: string | null;
   status_emoji: string | null;
   status_expires_at: string | null;

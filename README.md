@@ -177,6 +177,27 @@ since two people still works — the chains are just shorter.
   bothers you, the fix is to move the snapshot transport to WebRTC data channels
   and keep Supabase only for signalling.
 
+### Ratings, coins and the shop
+Every finished game is recorded. Competitive games (Haxball, tic-tac-toe) move
+an **Elo rating** — provisional players swing further, the top of the table
+settles down, and a win is never worth exactly zero however lopsided the
+matchup. Gartic has no winner to speak of, so it pays **coins** and counts
+games rather than moving a rating.
+
+Coins buy cosmetics: **ball trails** that follow whoever last touched the ball,
+**goal effects** that fire across the pitch when you score, and **celebrations**
+the pitch shouts afterwards. Everyone starts with the free defaults and 250
+coins. Shop cards animate a live preview, because a trail is only a trail once
+it is moving.
+
+**Leaderboards** filter by game and by today / this week / this month / all
+time. The windowed views are rebuilt from per-match rows, since aggregate stats
+carry no dates.
+
+None of this is client-trusted: ratings, payouts and purchases all run through
+security-definer functions in the database, and awarding one session twice is
+refused by a unique constraint rather than by good manners.
+
 ### Settings
 Per profile: display name, an uploaded **profile picture** of any size — it is
 resized in the browser before upload, so a 30 MB photo off a phone becomes a
@@ -202,6 +223,7 @@ src/
     chat/         message list, composer, GIF picker
     status/       the board and the pure status engine
     schedule/     the weekly editor
+    economy/      elo maths, cosmetics, shop and leaderboards
     games/        lobby substrate, room hook + haxball / tictactoe / gartic
     settings/     the settings modal
 api/gifs.ts           server-side Giphy proxy, so the key stays off clients
@@ -220,12 +242,13 @@ glow behind the page.
 npm test
 ```
 
-87 tests covering the parts where bugs actually hide: the status engine's
+127 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
 configurable rounds, Haxball's collisions, goal maths, charged shots and match
-limits, and two jsdom tests — one that mounts the whole app and walks through
+limits, Elo expectation/symmetry and the coin payouts, URL detection in
+messages, and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 

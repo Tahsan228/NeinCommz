@@ -4,6 +4,7 @@ import App from './App';
 import { SessionProvider } from './state/session';
 import { DirectoryProvider } from './state/directory';
 import { RoomsProvider } from './state/rooms';
+import { EconomyProvider } from './state/economy';
 import { ToastProvider } from './state/toasts';
 
 import './styles/tokens.css';
@@ -15,9 +16,11 @@ createRoot(document.getElementById('root')!).render(
     <SessionProvider>
       <DirectoryProvider>
         <RoomsProvider>
-          <ToastProvider>
-            <App />
-          </ToastProvider>
+          <EconomyProvider>
+            <ToastProvider>
+              <App />
+            </ToastProvider>
+          </EconomyProvider>
         </RoomsProvider>
       </DirectoryProvider>
     </SessionProvider>
