@@ -117,7 +117,8 @@ Two consequences worth knowing:
 
 ### Chat
 iMessage-shaped: grouped bubbles with tails, day separators, tapback reactions,
-replies, typing indicators, images (click, paste, or drag), and Giphy search.
+replies, typing indicators, read receipts under your own last message, images
+(click, paste, or drag), and Giphy search.
 Messages send optimistically and offer a retry if the network drops. History
 loads a page at a time going backwards, so a year of messages does not stall the
 first paint.
@@ -188,8 +189,13 @@ since two people still works — the chains are just shorter.
   power, with a dotted aim guide and a power meter — and a **best-of series**
   tracks match wins. The host runs a 60 Hz physics loop and broadcasts
   snapshots at 30 Hz over Supabase Realtime; everyone else sends key state.
-  Goals are shown again in slow motion the moment they go in — each client
-  records what it was already drawing, so a replay costs nothing on the wire.
+  A goal is a short film rather than a banner: the camera pushes in on whoever
+  scored and holds there with their name and celebration behind letterbox bars,
+  then the replay runs at normal speed — crawling through the strike itself,
+  because a replay at one speed shows you everything except the bit you wanted
+  to see — with the scorer, the assist and the score along the bottom. Then it
+  fades and play restarts behind a countdown. Each client tapes what it was
+  already drawing, so none of it costs anything on the wire.
 
   **Be realistic about this one.** It is a simplified take, not a clone, and
   every input takes a round trip through Supabase before it shows up. It is fine
@@ -289,7 +295,7 @@ glow behind the page.
 npm test
 ```
 
-215 tests covering the parts where bugs actually hide: the status engine's
+223 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
@@ -299,7 +305,7 @@ whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
 stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
 against itself; a Haxball bot must never kick towards its own goal), the
 leaderboard's ordering and its rule that nobody is ever dropped from the table,
-and two jsdom tests — one that mounts the whole app and walks through
+who gets credited with a goal and an assist, and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 
