@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { MAX_UPLOAD_BYTES, uploadImage } from '../../lib/supabase';
+import { uploadImage } from '../../lib/supabase';
+import { CHAT_SHRINK, shrinkImage } from '../../lib/image';
 import { useSession } from '../../state/session';
 import { Icon } from '../../components/Icon';
 import { GifPicker, type GifPick } from './GifPicker';
@@ -55,17 +56,23 @@ export function Composer({
     };
   }, [attach]);
 
-  const takeFile = (file: File) => {
+  // Big photos are re-encoded rather than refused. GIFs pass through whole so
+  // they keep animating.
+  const takeFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       setError('Images only for now.');
       return;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setError('That image is over 8 MB.');
-      return;
-    }
     setError('');
-    setAttach({ file, preview: URL.createObjectURL(file) });
+    setUploading(true);
+    try {
+      const ready = await shrinkImage(file, CHAT_SHRINK);
+      setAttach({ file: ready, preview: URL.createObjectURL(ready) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read that image.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const send = async () => {
@@ -128,7 +135,7 @@ export function Composer({
       onDrop={(e) => {
         e.preventDefault();
         const f = e.dataTransfer.files[0];
-        if (f) takeFile(f);
+        if (f) void takeFile(f);
       }}
     >
       {replyTo && (
@@ -169,7 +176,7 @@ export function Composer({
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) takeFile(f);
+            if (f) void takeFile(f);
             e.target.value = '';
           }}
         />
@@ -207,7 +214,7 @@ export function Composer({
             const f = item?.getAsFile();
             if (f) {
               e.preventDefault();
-              takeFile(f);
+              void takeFile(f);
             }
           }}
         />

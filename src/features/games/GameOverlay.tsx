@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import type { UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { presenceOf, useDirectory } from '../../state/directory';
-import { Avatar } from '../../components/ui';
+import { Avatar, Spinner } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { cancelSession, gameMeta, invite, leaveSession } from './lobby';
-import { RosterChip, useGameRoom } from './GamesPanel';
+import { RosterChip, useGameRoom } from './room';
 import { TicTacToeGame } from './tictactoe/TicTacToeGame';
 import { GarticGame } from './gartic/GarticGame';
 import { HaxballGame } from './haxball/HaxballGame';
@@ -13,15 +13,18 @@ import { HaxballGame } from './haxball/HaxballGame';
 export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: () => void }) {
   const { profile } = useSession();
   const { byId, profiles, presence } = useDirectory();
-  const { session, players } = useGameRoom(sessionId);
+  const { session, players, loading } = useGameRoom(sessionId);
   const [invitesOpen, setInvitesOpen] = useState(false);
   const [invited, setInvited] = useState<Set<UUID>>(new Set());
   const [confirmCancel, setConfirmCancel] = useState(false);
 
-  // The room can be closed out from under you by the last person leaving.
+  // The room can be closed out from under you — the host cancels it, or the
+  // last person leaves. Wait for the first fetch to settle before acting on a
+  // null session, though: until then null only means "not loaded yet", and
+  // closing on it slams the overlay shut the instant it opens.
   useEffect(() => {
-    if (session === null) onClose();
-  }, [session, onClose]);
+    if (!loading && session === null) onClose();
+  }, [loading, session, onClose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -32,7 +35,17 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  if (!session || !profile) return null;
+  if (!profile) return null;
+
+  if (loading || !session) {
+    return (
+      <div className="game-overlay">
+        <div className="game-stage">
+          <Spinner />
+        </div>
+      </div>
+    );
+  }
 
   const meta = gameMeta(session.game);
   const me = profile.id;

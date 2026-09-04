@@ -16,11 +16,10 @@ Two things to do: point it at a Supabase project, then run it.
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql),
-   and run it. It is safe to run more than once — **re-run it after pulling
-   changes**, since that is how new columns (like profile pictures) arrive.
-   - Near the end it runs `alter publication supabase_realtime add table …`.
-     If you re-run the file, those lines error with *"already member of
-     publication"*. That is fine — ignore it.
+   and run it. It is genuinely safe to run more than once — **re-run it after
+   pulling changes**, since that is how new columns (like profile pictures)
+   arrive. Watch for a green success message: the editor runs the file as one
+   transaction, so if any statement fails, *nothing* is applied.
 3. Go to **Authentication → Sign In / Providers → Email** and turn
    **Confirm email** *off*. Profiles are Netflix-style tiles, not signups with
    an inbox round trip; with confirmation on, a new profile cannot get in until
@@ -168,8 +167,10 @@ since two people still works — the chains are just shorter.
   and keep Supabase only for signalling.
 
 ### Settings
-Per profile: display name, an uploaded **profile picture** (or an emoji plus
-colour as the fallback), accent colour, five themes
+Per profile: display name, an uploaded **profile picture** of any size — it is
+resized in the browser before upload, so a 30 MB photo off a phone becomes a
+few hundred KB and nothing is ever rejected for being too big — or an emoji
+plus colour as the fallback, accent colour, five themes
 (including a light one), font size, message density, bubble tails, 12/24-hour
 clock, Enter-to-send, auto-scroll, sounds with volume, desktop notifications,
 status sharing, away timeout, the schedule editor, and changing your password.
@@ -180,7 +181,7 @@ status sharing, away timeout, the schedule editor, and changing your password.
 
 ```
 src/
-  lib/            supabase client, shared types, time helpers
+  lib/            supabase client, shared types, time and image helpers
   state/          session (auth + prefs), directory (people, schedules,
                   presence), toasts
   components/     the UI primitives every screen is built from
@@ -190,7 +191,7 @@ src/
     chat/         message list, composer, GIF picker
     status/       the board and the pure status engine
     schedule/     the weekly editor
-    games/        lobby substrate + haxball / tictactoe / gartic
+    games/        lobby substrate, room hook + haxball / tictactoe / gartic
     settings/     the settings modal
 api/gifs.ts           server-side Giphy proxy, so the key stays off clients
 supabase/schema.sql   the entire database, in one runnable file
@@ -208,11 +209,13 @@ glow behind the page.
 npm test
 ```
 
-60 tests covering the parts where bugs actually hide: the status engine's
+62 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, Gartic's chain rotation (nobody should
-ever get their own chain twice), Haxball's collision and goal maths, and a jsdom
-smoke test that mounts the whole app and walks through the front door.
+ever get their own chain twice), Haxball's collision and goal maths, and two
+jsdom tests — one that mounts the whole app and walks through the front door,
+and one pinning the game-room loading contract that once made every game
+unopenable.
 
 The suite pins its own `VITE_…` values, so it behaves identically on every
 machine and never touches a real Supabase project.

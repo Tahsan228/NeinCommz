@@ -50,16 +50,34 @@ export function HaxballGame({
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [ready, setReady] = useState(false);
+  const scoreRef = useRef({ red: 0, blue: 0 });
+  const playersRef = useRef(players);
+  playersRef.current = players;
 
   const isHost = session.host_id === me;
+
+  // React re-renders on every roster object, but the pitch only needs
+  // rebuilding when the actual line-up changes. Keying on the ids and teams
+  // stops a match resetting to kickoff every time the roster reloads.
+  const rosterKey = players
+    .map((p) => `${p.profile_id}:${p.team % 2}`)
+    .sort()
+    .join('|');
+
+  /** Push a score into React state only when it actually changed. */
+  const syncScore = (next: { red: number; blue: number }) => {
+    if (next.red === scoreRef.current.red && next.blue === scoreRef.current.blue) return;
+    scoreRef.current = { ...next };
+    setScore({ ...next });
+  };
 
   /* ------------------------------------------------------------- world -- */
   useEffect(() => {
     worldRef.current = createWorld(
-      players.map((p) => ({ id: p.profile_id, team: (p.team % 2) as 0 | 1 })),
+      playersRef.current.map((p) => ({ id: p.profile_id, team: (p.team % 2) as 0 | 1 })),
     );
     setReady(true);
-  }, [players]);
+  }, [rosterKey]);
 
   /* --------------------------------------------------------- networking -- */
   useEffect(() => {
@@ -78,7 +96,9 @@ export function HaxballGame({
       const w = worldRef.current;
       if (!w) return;
       applySnapshot(w, payload as Snapshot);
-      setScore({ ...w.score });
+      // Snapshots land ~30x a second; re-rendering that often for a scoreline
+      // that changes once a minute is pure waste.
+      syncScore(w.score);
     });
 
     ch.subscribe();
@@ -139,6 +159,8 @@ export function HaxballGame({
   }, [isHost, me]);
 
   /* -------------------------------------------------------- host loop --- */
+  // Deliberately does not depend on the score: including it tore down and
+  // rebuilt the 60Hz interval on every goal.
   useEffect(() => {
     if (!isHost || !ready) return;
     let frame = 0;
@@ -154,10 +176,10 @@ export function HaxballGame({
           payload: snapshot(w),
         });
       }
-      if (w.score.red !== score.red || w.score.blue !== score.blue) setScore({ ...w.score });
+      syncScore(w.score);
     }, TICK_MS);
     return () => window.clearInterval(id);
-  }, [isHost, ready, score.red, score.blue]);
+  }, [isHost, ready]);
 
   /* ------------------------------------------------------------ render -- */
   useEffect(() => {

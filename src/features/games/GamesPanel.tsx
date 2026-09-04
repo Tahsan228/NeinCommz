@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import type { GameId, GameInvite, GamePlayer, GameSession, UUID } from '../../lib/types';
+import type { GameId, GameInvite, GameSession, Profile, UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { useDirectory } from '../../state/directory';
 import { useToasts } from '../../state/toasts';
-import { Avatar } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import {
   GAMES,
@@ -27,15 +26,30 @@ export function GamesPanel() {
   const [counts, setCounts] = useState<Map<UUID, number>>(new Map());
   const [joined, setJoined] = useState<Set<UUID>>(new Set());
   const [openId, setOpenId] = useState<UUID | null>(null);
+  const [error, setError] = useState('');
 
   const me = profile?.id;
 
+  // The invite listener needs the newest sessions and profiles without being
+  // torn down and rebuilt whenever either changes — resubscribing re-runs the
+  // "catch up on pending invites" fetch and toasts everything a second time.
+  const sessionsRef = useRef<GameSession[]>([]);
+  const profilesRef = useRef<Map<UUID, Profile>>(new Map());
+  const seenInvites = useRef<Set<UUID>>(new Set());
+  sessionsRef.current = sessions;
+  profilesRef.current = byId;
+
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error: e } = await supabase
       .from('game_sessions')
       .select('*')
       .in('status', ['lobby', 'active'])
       .order('created_at', { ascending: false });
+
+    if (e) {
+      setError(e.message);
+      return;
+    }
     const list = (data as GameSession[]) ?? [];
     setSessions(list);
     if (me) setJoined(await mySessions(me));
@@ -72,59 +86,99 @@ export function GamesPanel() {
   useEffect(() => {
     if (!me) return;
 
-    const show = (inv: GameInvite) => {
-      const from = byId.get(inv.from_id)?.display_name ?? 'Someone';
-      const meta = gameMeta((sessions.find((s) => s.id === inv.session_id)?.game ?? 'tictactoe') as GameId);
+    const show = async (inv: GameInvite) => {
+      // One toast per invite, however many times we hear about it.
+      if (seenInvites.current.has(inv.id)) return;
+      seenInvites.current.add(inv.id);
+
+      const from = profilesRef.current.get(inv.from_id)?.display_name ?? 'Someone';
+
+      // The invite can beat the session insert down the wire, so fall back to
+      // asking for the room directly rather than guessing which game it is.
+      let game = sessionsRef.current.find((s) => s.id === inv.session_id)?.game;
+      if (!game) {
+        const { data } = await supabase
+          .from('game_sessions')
+          .select('game')
+          .eq('id', inv.session_id)
+          .maybeSingle();
+        game = (data as { game: GameId } | null)?.game;
+      }
+      if (!game) return; // room already closed; nothing to join
+
+      const meta = gameMeta(game);
       push({
         icon: meta.icon,
         title: `${from} wants to play ${meta.name}`,
-        sub: 'Invite expires when the room closes.',
-        ms: 20_000,
+        sub: 'Hit join to hop in.',
+        ms: 25_000,
         action: {
           label: 'Join',
           run: () => {
-            void answerInvite(inv.id, true);
-            void joinSession(inv.session_id, me).then(() => setOpenId(inv.session_id));
+            void (async () => {
+              await answerInvite(inv.id, true);
+              await joinSession(inv.session_id, me);
+              setOpenId(inv.session_id);
+            })();
           },
         },
       });
     };
 
-    // Anything already waiting from before this tab opened.
+    // Catch up on anything sent while this tab was closed, but only recent
+    // ones — an hour-old invite is not worth a notification.
+    const since = new Date(Date.now() - 30 * 60_000).toISOString();
     void supabase
       .from('game_invites')
       .select('*')
       .eq('to_id', me)
       .eq('status', 'pending')
-      .then(({ data }) => (data as GameInvite[] | null)?.forEach(show));
+      .gte('created_at', since)
+      .then(({ data }) => (data as GameInvite[] | null)?.forEach((inv) => void show(inv)));
 
     const ch = supabase
       .channel(`invites:${me}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'game_invites', filter: `to_id=eq.${me}` },
-        (payload) => show(payload.new as GameInvite),
+        (payload) => void show(payload.new as GameInvite),
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(ch);
     };
-  }, [me, byId, push, sessions]);
+  }, [me, push]);
 
+  /* ------------------------------------------------------------ actions -- */
   const startGame = async (game: GameId) => {
     if (!me) return;
-    // Rejoin rather than pile up empty rooms for the same game.
-    const mine = sessions.find((s) => s.game === game && s.host_id === me && s.status !== 'done');
-    if (mine) return setOpenId(mine.id);
-    const s = await createSession(game, me);
-    setOpenId(s.id);
+    setError('');
+    try {
+      // Reopen your own room rather than piling up empties for the same game.
+      const mine = sessions.find((s) => s.game === game && s.host_id === me && s.status !== 'done');
+      if (mine) {
+        await joinSession(mine.id, me);
+        setOpenId(mine.id);
+        return;
+      }
+      const s = await createSession(game, me);
+      await load();
+      setOpenId(s.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open that room.');
+    }
   };
 
   const join = async (s: GameSession) => {
     if (!me) return;
-    await joinSession(s.id, me);
-    setOpenId(s.id);
+    setError('');
+    try {
+      await joinSession(s.id, me);
+      setOpenId(s.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not join.');
+    }
   };
 
   const leave = async (id: UUID) => {
@@ -158,6 +212,8 @@ export function GamesPanel() {
       <div className="label" style={{ padding: '4px 18px 8px' }}>
         Rooms open now
       </div>
+
+      {error && <p className="err" style={{ padding: '0 18px' }}>{error}</p>}
 
       <div className="column-scroll" style={{ paddingBottom: 8 }}>
         {sessions.length === 0 && (
@@ -195,11 +251,7 @@ export function GamesPanel() {
                 </button>
               )}
               {inRoom && !isHost && (
-                <button
-                  className="btn btn-sm"
-                  title="Leave this room"
-                  onClick={() => void leave(s.id)}
-                >
+                <button className="btn btn-sm" title="Leave this room" onClick={() => void leave(s.id)}>
                   <Icon name="logout" size={14} />
                 </button>
               )}
@@ -217,62 +269,5 @@ export function GamesPanel() {
 
       {openId && <GameOverlay sessionId={openId} onClose={() => setOpenId(null)} />}
     </>
-  );
-}
-
-/** Live session + roster for one room. Shared by the overlay and each game. */
-export function useGameRoom(sessionId: UUID) {
-  const [session, setSession] = useState<GameSession | null>(null);
-  const [players, setPlayers] = useState<GamePlayer[]>([]);
-
-  const load = useCallback(async () => {
-    const [{ data: s }, { data: p }] = await Promise.all([
-      supabase.from('game_sessions').select('*').eq('id', sessionId).maybeSingle(),
-      supabase.from('game_players').select('*').eq('session_id', sessionId).order('seat'),
-    ]);
-    setSession((s as GameSession) ?? null);
-    setPlayers((p as GamePlayer[]) ?? []);
-  }, [sessionId]);
-
-  useEffect(() => {
-    void load();
-    const ch = supabase
-      .channel(`room:${sessionId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${sessionId}` },
-        (payload) => {
-          if (payload.eventType === 'DELETE') setSession(null);
-          else setSession(payload.new as GameSession);
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'game_players', filter: `session_id=eq.${sessionId}` },
-        () => void load(),
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(ch);
-    };
-  }, [sessionId, load]);
-
-  return { session, players };
-}
-
-export function RosterChip({ id }: { id: UUID }) {
-  const { byId } = useDirectory();
-  const p = byId.get(id);
-  return (
-    <div className="roster-chip">
-      <Avatar
-        emoji={p?.avatar_emoji ?? '🙂'}
-        url={p?.avatar_url}
-        color={p?.avatar_color ?? '#555'}
-        size={24}
-        name={p?.display_name}
-      />
-      {p?.display_name ?? 'Someone'}
-    </div>
   );
 }

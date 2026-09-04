@@ -42,6 +42,8 @@ export function GarticGame({
   const [submitted, setSubmitted] = useState(false);
   const [remaining, setRemaining] = useState(state.seconds);
   const canvasRef = useRef<DrawCanvasHandle>(null);
+  /** The step we have already pushed forward, so we never advance one twice. */
+  const advancedFrom = useRef(-1);
 
   const isHost = session.host_id === me;
   const order = state.order.length ? state.order : players.map((p) => p.profile_id);
@@ -116,10 +118,17 @@ export function GarticGame({
   // done" at once cannot race each other into skipping a round.
   useEffect(() => {
     if (!isHost || state.phase !== 'play') return;
+
+    // setState is async and the new step only comes back over realtime, so
+    // without this latch the effect re-fires on the same step and skips a
+    // round — or several.
+    if (advancedFrom.current === state.step) return;
+
     const everyoneDone = doneThisStep >= n;
     const timeUp = remaining <= 0 && state.startedAt !== null;
     if (!everyoneDone && !timeUp) return;
 
+    advancedFrom.current = state.step;
     const nextStep = state.step + 1;
     void setState(
       session.id,

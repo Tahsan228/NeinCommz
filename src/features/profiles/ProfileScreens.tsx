@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { errText, isConfigured, MAX_UPLOAD_BYTES, slugify, supabase } from '../../lib/supabase';
+import { errText, isConfigured, slugify, supabase } from '../../lib/supabase';
+import { AVATAR_SHRINK, formatBytes, shrinkImage } from '../../lib/image';
 import type { PublicProfile } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { Field, Modal, Spinner } from '../../components/ui';
@@ -43,20 +44,34 @@ export function AvatarEditor({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const [working, setWorking] = useState(false);
 
-  const take = (f: File | undefined) => {
+  // Any size goes in: the picture is resized in the browser first, so a 30 MB
+  // photo straight off a phone becomes a few hundred KB before it is uploaded.
+  const take = async (f: File | undefined) => {
     if (!f) return;
-    if (!f.type.startsWith('image/')) return setError('That needs to be an image.');
-    if (f.size > MAX_UPLOAD_BYTES) return setError('That image is over 8 MB.');
     setError('');
-    onFile(f);
+    setNote('');
+    setWorking(true);
+    try {
+      const shrunk = await shrinkImage(f, AVATAR_SHRINK);
+      if (shrunk !== f) {
+        setNote(`Resized ${formatBytes(f.size)} → ${formatBytes(shrunk.size)}`);
+      }
+      onFile(shrunk);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read that image.');
+    } finally {
+      setWorking(false);
+    }
   };
 
   return (
     <>
       <div className="pfp-editor">
         <div className="pfp-preview" style={{ ['--av' as string]: color }}>
-          {busy ? (
+          {busy || working ? (
             <Spinner />
           ) : url ? (
             <img src={url} alt="Your profile picture" />
@@ -72,13 +87,18 @@ export function AvatarEditor({
             accept="image/*"
             hidden
             onChange={(e) => {
-              take(e.target.files?.[0]);
+              void take(e.target.files?.[0]);
               e.target.value = '';
             }}
           />
-          <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={working}
+            onClick={() => fileRef.current?.click()}
+          >
             <Icon name="upload" size={15} />
-            {url ? 'Change picture' : 'Upload a picture'}
+            {working ? 'Resizing…' : url ? 'Change picture' : 'Upload a picture'}
           </button>
           {url && (
             <button type="button" className="btn btn-sm btn-ghost" onClick={onRemove}>
@@ -86,8 +106,8 @@ export function AvatarEditor({
               Remove
             </button>
           )}
-          <div style={{ fontSize: 11.5, color: 'var(--ink-faint)' }}>
-            {url ? 'Shown everywhere instead of the emoji.' : 'PNG or JPG, up to 8 MB.'}
+          <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', maxWidth: 230, lineHeight: 1.45 }}>
+            {note || (url ? 'Shown everywhere instead of the emoji.' : 'Any size — it gets resized for you.')}
           </div>
         </div>
       </div>

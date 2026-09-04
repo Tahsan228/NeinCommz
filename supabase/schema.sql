@@ -299,15 +299,25 @@ end $$;
 grant execute on function ttt_move(uuid, int) to authenticated;
 
 -- ------------------------------------------------------------------ realtime
--- Ignore "already member of publication" errors here; they mean it is done.
-alter publication supabase_realtime add table messages;
-alter publication supabase_realtime add table reactions;
-alter publication supabase_realtime add table profiles;
-alter publication supabase_realtime add table schedule_blocks;
-alter publication supabase_realtime add table game_sessions;
-alter publication supabase_realtime add table game_players;
-alter publication supabase_realtime add table game_invites;
-alter publication supabase_realtime add table gartic_rounds;
+-- Adding a table that is already published raises an error, and the Supabase
+-- SQL editor runs this file as a single transaction — so one such error would
+-- roll back the ENTIRE script, including the alter table above. Checking first
+-- is what makes re-running this file actually safe.
+do $$
+declare t text;
+begin
+  foreach t in array array['messages','reactions','profiles','schedule_blocks',
+                           'game_sessions','game_players','game_invites',
+                           'gartic_rounds']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
 
 -- ------------------------------------------------------------------- storage
 -- Bucket for pasted/uploaded chat images.
