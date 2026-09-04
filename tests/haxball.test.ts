@@ -151,8 +151,15 @@ describe('pace', () => {
 
     // Spawns are random now, so compare the top speed each one reaches rather
     // than where they happen to be after a fixed run — a quick player simply
-    // reaches the far wall sooner and sits against it at nearly zero.
+    // reaches the far wall sooner and sits against it at nearly zero. Start
+    // both from the same spot too, or a bad draw puts the fast one against
+    // the wall before it has got going.
     const topSpeed = (w: ReturnType<typeof kickedOff>) => {
+      w.players[0].x = bounds(w.pitch).left + 40;
+      w.players[0].y = w.pitch.h / 2;
+      w.players[0].vx = 0;
+      w.players[0].vy = 0;
+
       let best = 0;
       for (let i = 0; i < 90; i++) {
         step(w, new Map([['a', RIGHT]]));
