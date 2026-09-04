@@ -1698,3 +1698,104 @@
   box-shadow: none;
   padding: 0;
 }
+
+/* ===================================================== conversations ===== */
+
+.room-strip {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--hairline);
+  scrollbar-width: none;
+}
+.room-strip::-webkit-scrollbar {
+  height: 0;
+}
+
+.room-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 5px 12px 5px 5px;
+  border-radius: var(--r-pill);
+  background: var(--control-fill);
+  box-shadow: var(--lift-1);
+  border: 1px solid var(--edge);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink-dim);
+  max-width: 170px;
+  transition: transform var(--fast), color var(--fast);
+}
+.room-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-chip:hover {
+  transform: translateY(-1px);
+  color: var(--ink);
+}
+.room-chip[data-on='true'] {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: var(--lift-1), inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.room-chip-new {
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+  color: var(--ink-faint);
+}
+
+/* A backdrop image needs a scrim, or light wallpapers swallow the text. */
+.msgs {
+  position: relative;
+}
+.msgs-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--panel-top) 78%, transparent),
+    color-mix(in srgb, var(--panel-bottom) 88%, transparent));
+}
+.msgs > *:not(.msgs-scrim) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Names and avatars in the thread open a profile card. */
+.avatar-btn {
+  display: block;
+  border-radius: 50%;
+  transition: transform var(--fast);
+}
+.avatar-btn:hover {
+  transform: scale(1.12);
+}
+
+.msg-author-btn {
+  background: none;
+  padding: 0;
+  transition: color var(--fast);
+}
+.msg-author-btn:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.status-card-btn {
+  width: 100%;
+  text-align: left;
+  transition: background var(--fast);
+}
+.status-card-btn:hover {
+  background: var(--row-hover);
+}

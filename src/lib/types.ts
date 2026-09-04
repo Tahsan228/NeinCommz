@@ -46,6 +46,7 @@ export interface Profile {
   avatar_color: string;
   accent_color: string;
   has_recovery: boolean;
+  bio: string | null;
   status_text: string | null;
   status_emoji: string | null;
   status_expires_at: string | null;
@@ -62,6 +63,25 @@ export interface PublicProfile {
   avatar_url: string | null;
   avatar_color: string;
   has_recovery: boolean;
+}
+
+export interface Room {
+  id: UUID;
+  name: string;
+  /** 'group' for Main and user-made groups, 'dm' for a two-person thread. */
+  kind: 'group' | 'dm';
+  icon_emoji: string | null;
+  icon_url: string | null;
+  /** A hosted image URL used as the conversation's backdrop. */
+  backdrop_url: string | null;
+  created_by: UUID | null;
+  created_at: string;
+}
+
+export interface RoomMember {
+  room_id: UUID;
+  profile_id: UUID;
+  joined_at: string;
 }
 
 export interface Message {

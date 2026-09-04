@@ -410,3 +410,116 @@ end $fn$;
 
 revoke all on function login_email(text, text) from public;
 grant execute on function login_email(text, text) to anon, authenticated;
+
+-- ============================================================ rooms round 2
+-- Direct messages and user-made group chats.
+
+alter table rooms add column if not exists icon_emoji  text;
+alter table rooms add column if not exists icon_url    text;
+alter table rooms add column if not exists backdrop_url text;
+alter table rooms add column if not exists created_by  uuid references profiles on delete set null;
+
+alter table profiles add column if not exists bio text;
+
+-- Who can see which conversation. Main is a room like any other; everyone is
+-- simply a member of it.
+create table if not exists room_members (
+  room_id    uuid not null references rooms on delete cascade,
+  profile_id uuid not null references profiles on delete cascade,
+  joined_at  timestamptz not null default now(),
+  primary key (room_id, profile_id)
+);
+create index if not exists room_members_profile_idx on room_members (profile_id);
+
+-- Everyone who already has a profile belongs in Main.
+insert into room_members (room_id, profile_id)
+select '00000000-0000-0000-0000-000000000001', id from profiles
+on conflict do nothing;
+
+-- ...and so does everyone who joins later.
+create or replace function add_to_main_room()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+begin
+  insert into room_members (room_id, profile_id)
+  values ('00000000-0000-0000-0000-000000000001', new.id)
+  on conflict do nothing;
+  return new;
+end $fn$;
+
+drop trigger if exists on_profile_created_join_main on profiles;
+create trigger on_profile_created_join_main
+  after insert on profiles
+  for each row execute function add_to_main_room();
+
+alter table room_members enable row level security;
+
+drop policy if exists room_members_read on room_members;
+create policy room_members_read on room_members for select to authenticated using (true);
+
+drop policy if exists room_members_write on room_members;
+create policy room_members_write on room_members for all to authenticated
+  using (true) with check (true);
+
+drop policy if exists rooms_write on rooms;
+create policy rooms_write on rooms for all to authenticated
+  using (true) with check (true);
+
+-- ------------------------------------------------------- message visibility
+-- IMPORTANT. Until direct messages existed, "any signed-in member may read
+-- everything" was a fair description of a single shared room. It is not a fair
+-- description of someone else's DMs. Reads are now scoped to rooms you are
+-- actually a member of.
+create or replace function is_room_member(p_room uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select exists (
+    select 1 from room_members
+    where room_id = p_room and profile_id = auth.uid()
+  );
+$fn$;
+
+grant execute on function is_room_member(uuid) to authenticated;
+
+drop policy if exists messages_read on messages;
+create policy messages_read on messages for select to authenticated
+  using (is_room_member(room_id));
+
+drop policy if exists messages_write on messages;
+create policy messages_write on messages for all to authenticated
+  using (author_id = auth.uid() and is_room_member(room_id))
+  with check (author_id = auth.uid() and is_room_member(room_id));
+
+drop policy if exists rooms_read on rooms;
+create policy rooms_read on rooms for select to authenticated
+  using (is_room_member(id));
+
+-- Reactions inherit the same reach as the message they hang off.
+drop policy if exists reactions_read on reactions;
+create policy reactions_read on reactions for select to authenticated
+  using (exists (
+    select 1 from messages m
+    where m.id = reactions.message_id and is_room_member(m.room_id)
+  ));
+
+-- Realtime for the new tables.
+do $$
+declare t text;
+begin
+  foreach t in array array['rooms','room_members']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;

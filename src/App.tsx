@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
-import { MAIN_ROOM, type Message } from './lib/types';
+import type { Message } from './lib/types';
 import { formatClock } from './lib/time';
 import { useSession } from './state/session';
 import { useDirectory } from './state/directory';
@@ -16,7 +16,7 @@ import {
   ResetPasswordScreen,
 } from './features/profiles/ProfileScreens';
 import type { PublicProfile } from './lib/types';
-import { ChatPanel } from './features/chat/ChatPanel';
+import { ChatColumn } from './features/chat/ChatColumn';
 import { GamesPanel } from './features/games/GamesPanel';
 import { StatusBoard } from './features/status/StatusBoard';
 import { QuickStatus } from './features/status/QuickStatus';
@@ -110,7 +110,7 @@ function Home() {
 
       <div className="columns">
         <Panel label="Chat" className="column-chat">
-          <ChatPanel />
+          <ChatColumn />
         </Panel>
 
         <Panel label="Games" className="column-games">
@@ -144,7 +144,7 @@ function useMessageAlerts() {
       .channel('alerts:main')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${MAIN_ROOM}` },
+        { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload) => {
           const m = payload.new as Message;
           if (m.author_id === profile.id) return;

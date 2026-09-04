@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { presenceOf, useDirectory } from '../../state/directory';
 import { Avatar } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { resolveStatus } from './statusEngine';
 import { StatusGlyph } from './QuickStatus';
+import { ProfileCard } from '../profiles/ProfileCard';
 
 export function StatusBoard() {
   const { profile } = useSession();
@@ -12,6 +14,7 @@ export function StatusBoard() {
 
   // One shared clock so every card recomputes together, on the minute.
   const [now, setNow] = useState(() => new Date());
+  const [viewing, setViewing] = useState<UUID | null>(null);
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 20_000);
     return () => window.clearInterval(id);
@@ -37,7 +40,12 @@ export function StatusBoard() {
       {rows.length === 0 && <div className="empty">Nobody has a profile yet.</div>}
 
       {rows.map(({ profile: p, status }) => (
-        <div className="status-card" key={p.id}>
+        <button
+          className="status-card status-card-btn"
+          key={p.id}
+          onClick={() => setViewing(p.id)}
+          title={`About ${p.display_name}`}
+        >
           <div className="dot-wrap">
             <Avatar
               emoji={p.avatar_emoji}
@@ -67,8 +75,10 @@ export function StatusBoard() {
 
             {status.next && <div className="status-next">{status.next}</div>}
           </div>
-        </div>
+        </button>
       ))}
+
+      {viewing && <ProfileCard id={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }

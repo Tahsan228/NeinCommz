@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { SessionProvider } from './state/session';
 import { DirectoryProvider } from './state/directory';
+import { RoomsProvider } from './state/rooms';
 import { ToastProvider } from './state/toasts';
 
 import './styles/tokens.css';
@@ -13,9 +14,11 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <SessionProvider>
       <DirectoryProvider>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
+        <RoomsProvider>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </RoomsProvider>
       </DirectoryProvider>
     </SessionProvider>
   </StrictMode>,

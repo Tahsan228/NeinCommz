@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { errText, supabase } from '../../lib/supabase';
-import { MAIN_ROOM, type Message, type Reaction, type UUID } from '../../lib/types';
+import type { Message, Reaction, UUID } from '../../lib/types';
 import { formatDaySeparator, formatStamp, sameDay } from '../../lib/time';
 import { splitLinks } from '../../lib/linkify';
 import { useSession } from '../../state/session';
@@ -56,9 +56,23 @@ function MessageText({ body }: { body: string }) {
   );
 }
 
-export function ChatPanel() {
+export function ChatPanel({
+  roomId,
+  title,
+  subtitle,
+  backdropUrl,
+  onOpenProfile,
+  onOpenRoomSettings,
+}: {
+  roomId: UUID;
+  title: string;
+  subtitle: string;
+  backdropUrl?: string | null;
+  onOpenProfile?: (id: UUID) => void;
+  onOpenRoomSettings?: () => void;
+}) {
   const { profile, prefs } = useSession();
-  const { byId, profiles } = useDirectory();
+  const { byId } = useDirectory();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [reactions, setReactions] = useState<Reaction[]>([]);
@@ -82,6 +96,20 @@ export function ChatPanel() {
 
   const me = profile?.id;
 
+  // Everything below is per-room, so switching rooms starts clean rather
+  // than briefly showing the previous conversation under the new title.
+  useEffect(() => {
+    setMessages([]);
+    setLoading(true);
+    setHasOlder(false);
+    setReplyTo(null);
+    setSearchOpen(false);
+    setQuery('');
+    setResults(null);
+    setTypers(new Map());
+    pinnedRef.current = true;
+  }, [roomId]);
+
   /* ------------------------------------------------------------ history -- */
   // Everything is kept forever, so the initial load takes the newest page and
   // walks backwards on demand rather than pulling years of history at once.
@@ -92,7 +120,7 @@ export function ChatPanel() {
       const { data, error: e } = await supabase
         .from('messages')
         .select('*')
-        .eq('room_id', MAIN_ROOM)
+        .eq('room_id', roomId)
         .order('created_at', { ascending: false })
         .limit(PAGE);
       if (!alive) return;
@@ -108,7 +136,7 @@ export function ChatPanel() {
     return () => {
       alive = false;
     };
-  }, [me]);
+  }, [me, roomId]);
 
   const loadOlder = useCallback(async () => {
     const oldest = messages[0];
@@ -119,7 +147,7 @@ export function ChatPanel() {
     const { data } = await supabase
       .from('messages')
       .select('*')
-      .eq('room_id', MAIN_ROOM)
+      .eq('room_id', roomId)
       .lt('created_at', oldest.created_at)
       .order('created_at', { ascending: false })
       .limit(PAGE);
@@ -132,7 +160,7 @@ export function ChatPanel() {
     requestAnimationFrame(() => {
       if (el) el.scrollTop = el.scrollHeight - prevHeight;
     });
-  }, [messages]);
+  }, [messages, roomId]);
 
   /* ----------------------------------------------------------- realtime -- */
   useEffect(() => {
@@ -142,7 +170,7 @@ export function ChatPanel() {
       .channel('chat:main')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `room_id=eq.${MAIN_ROOM}` },
+        { event: '*', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
         (payload) => {
           if (payload.eventType === 'INSERT') {
             const row = payload.new as Message;
@@ -190,14 +218,14 @@ export function ChatPanel() {
     return () => {
       void supabase.removeChannel(ch);
     };
-  }, [me]);
+  }, [me, roomId]);
 
   /* ------------------------------------------------------------- typing -- */
   // Typing is ephemeral by nature, so it rides the broadcast channel and never
   // touches the database.
   useEffect(() => {
     if (!me) return;
-    const ch = supabase.channel('typing:main', { config: { broadcast: { self: false } } });
+    const ch = supabase.channel(`typing:${roomId}`, { config: { broadcast: { self: false } } });
     ch.on('broadcast', { event: 'typing' }, ({ payload }) => {
       const id = (payload as { id: UUID }).id;
       setTypers((cur) => new Map(cur).set(id, Date.now()));
@@ -223,7 +251,7 @@ export function ChatPanel() {
       void supabase.removeChannel(ch);
       typingChannel.current = null;
     };
-  }, [me]);
+  }, [me, roomId]);
 
   const announceTyping = useCallback(() => {
     const now = Date.now();
@@ -246,7 +274,7 @@ export function ChatPanel() {
       const { data } = await supabase
         .from('messages')
         .select('*')
-        .eq('room_id', MAIN_ROOM)
+        .eq('room_id', roomId)
         .ilike('body', '%' + q + '%')
         .order('created_at', { ascending: false })
         .limit(60);
@@ -254,7 +282,7 @@ export function ChatPanel() {
       setSearching(false);
     }, 280);
     return () => window.clearTimeout(t);
-  }, [query, searchOpen]);
+  }, [query, searchOpen, roomId]);
 
   /** Reopen the conversation around a search result and flash it. */
   const jumpTo = useCallback(async (target: Message) => {
@@ -262,14 +290,14 @@ export function ChatPanel() {
       supabase
         .from('messages')
         .select('*')
-        .eq('room_id', MAIN_ROOM)
+        .eq('room_id', roomId)
         .lte('created_at', target.created_at)
         .order('created_at', { ascending: false })
         .limit(60),
       supabase
         .from('messages')
         .select('*')
-        .eq('room_id', MAIN_ROOM)
+        .eq('room_id', roomId)
         .gt('created_at', target.created_at)
         .order('created_at', { ascending: true })
         .limit(30),
@@ -288,7 +316,7 @@ export function ChatPanel() {
       document.getElementById('msg-' + target.id)?.scrollIntoView({ block: 'center' });
     });
     window.setTimeout(() => setHit(null), 2600);
-  }, []);
+  }, [roomId]);
 
   /* ----------------------------------------------------------- scrolling -- */
   const onScroll = () => {
@@ -312,7 +340,7 @@ export function ChatPanel() {
       const tempId = `pending-${crypto.randomUUID()}`;
       const optimistic: Message = {
         id: tempId,
-        room_id: MAIN_ROOM,
+        room_id: roomId,
         author_id: me,
         kind: out.kind,
         body: out.body,
@@ -332,7 +360,7 @@ export function ChatPanel() {
       const { data, error: e } = await supabase
         .from('messages')
         .insert({
-          room_id: MAIN_ROOM,
+          room_id: roomId,
           author_id: me,
           kind: out.kind,
           body: out.body,
@@ -357,7 +385,7 @@ export function ChatPanel() {
       });
       if (e) setError(errText(e));
     },
-    [me, replyTo],
+    [me, replyTo, roomId],
   );
 
   const retry = useCallback(
@@ -463,11 +491,11 @@ export function ChatPanel() {
           </>
         ) : (
           <>
-            <div style={{ flex: 1 }}>
-              <h2>Main</h2>
-              <div className="sub">
-                {profiles.length} {profiles.length === 1 ? 'person' : 'people'} · every message kept
-              </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {title}
+              </h2>
+              <div className="sub">{subtitle}</div>
             </div>
             <button
               className="btn btn-ghost btn-icon"
@@ -477,6 +505,16 @@ export function ChatPanel() {
             >
               <Icon name="search" size={17} />
             </button>
+            {onOpenRoomSettings && (
+              <button
+                className="btn btn-ghost btn-icon"
+                title="Group settings"
+                aria-label="Group settings"
+                onClick={onOpenRoomSettings}
+              >
+                <Icon name="users" size={17} />
+              </button>
+            )}
           </>
         )}
       </div>
@@ -515,7 +553,18 @@ export function ChatPanel() {
         </div>
       )}
 
-      <div className="msgs" ref={scrollRef} onScroll={onScroll} hidden={searchOpen}>
+      <div
+        className="msgs"
+        ref={scrollRef}
+        onScroll={onScroll}
+        hidden={searchOpen}
+        style={
+          backdropUrl
+            ? { backgroundImage: `url(${backdropUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+            : undefined
+        }
+      >
+        {backdropUrl && <div className="msgs-scrim" />}
         {loading && <div className="empty">Loading history…</div>}
 
         {!loading && hasOlder && (
@@ -551,13 +600,23 @@ export function ChatPanel() {
             <div key={m.id} id={`msg-${m.id}`}>
               {newDay && <div className="daysep">{formatDaySeparator(m.created_at)}</div>}
               {startsGroup && !mine && (
-                <div className="msg-author">{author?.display_name ?? 'Someone'}</div>
+                <button
+                  className="msg-author msg-author-btn"
+                  onClick={() => author && onOpenProfile?.(author.id)}
+                >
+                  {author?.display_name ?? 'Someone'}
+                </button>
               )}
 
               <div className="msg" data-mine={mine} data-last={endsGroup} style={{ position: 'relative' }}>
                 {!mine && (
                   <div style={{ width: 26, flex: 'none' }}>
                     {endsGroup && author && (
+                      <button
+                        className="avatar-btn"
+                        title={`About ${author.display_name}`}
+                        onClick={() => onOpenProfile?.(author.id)}
+                      >
                       <Avatar
                         emoji={author.avatar_emoji}
                         url={author.avatar_url}
@@ -565,6 +624,7 @@ export function ChatPanel() {
                         size={26}
                         name={author.display_name}
                       />
+                      </button>
                     )}
                   </div>
                 )}

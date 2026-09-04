@@ -61,6 +61,18 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             />
           </Field>
 
+          <Field label="Bio">
+            <textarea
+              className="input"
+              rows={3}
+              maxLength={280}
+              placeholder="Anything you want people to know."
+              style={{ resize: 'vertical', lineHeight: 1.5 }}
+              defaultValue={profile.bio ?? ''}
+              onBlur={(e) => void saveProfile({ bio: e.target.value.trim() || null })}
+            />
+          </Field>
+
           <AvatarEditor
             emoji={profile.avatar_emoji}
             color={profile.avatar_color}
