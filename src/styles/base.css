@@ -1,0 +1,527 @@
+/* --------------------------------------------------------------- reset --- */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--font-size);
+  color: var(--ink);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* The ambient wash. Three very soft radial blobs behind everything give the
+   page depth without any element having to carry a heavy gradient itself. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 700px at 12% -10%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 62%),
+    radial-gradient(900px 600px at 105% 8%, rgba(90, 120, 220, 0.05), transparent 60%),
+    radial-gradient(1000px 900px at 50% 115%, rgba(0, 0, 0, 0.55), transparent 65%),
+    linear-gradient(178deg, var(--bg-page), var(--bg-void));
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: padding-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-hi);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------ shared primitives - */
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  padding: 0 4px 8px;
+  user-select: none;
+}
+
+/* A panel: the raised card that groups a section. */
+.panel {
+  position: relative;
+  background: var(--panel-fill);
+  border-radius: var(--r-panel);
+  box-shadow: var(--lift-2);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--sheen);
+  border-radius: inherit;
+}
+
+/* A group of rows, as in the OUTPUT card of the reference. */
+.group {
+  background: var(--row);
+  border-radius: var(--r-card);
+  box-shadow: var(--lift-1);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  min-height: 54px;
+  position: relative;
+}
+
+.row + .row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.row-sub {
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  line-height: 1.35;
+}
+
+.row-clickable {
+  width: 100%;
+  text-align: left;
+  transition: background var(--fast);
+}
+.row-clickable:hover {
+  background: var(--row-hover);
+}
+.row-clickable:active {
+  background: var(--row);
+  box-shadow: var(--press);
+}
+
+/* ------------------------------------------------------------- buttons --- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: var(--r-control);
+  background: var(--control-fill);
+  box-shadow: var(--lift-1);
+  border: 1px solid var(--edge);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink);
+  transition: transform var(--fast), box-shadow var(--fast), background var(--fast);
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--control-hover-top), var(--control-hover-bottom));
+  transform: translateY(-1px);
+  box-shadow: var(--lift-2);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--press);
+  background: var(--control-bottom);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-accent {
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 60%, black);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22),
+              0 1px 2px rgba(0, 0, 0, 0.4),
+              0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.btn-accent:hover:not(:disabled) {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-hi) 85%, white),
+    var(--accent-hi));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3),
+              0 2px 4px rgba(0, 0, 0, 0.4),
+              0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+.btn-ghost {
+  background: transparent;
+  box-shadow: none;
+  border-color: transparent;
+  color: var(--ink-dim);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+  color: var(--ink);
+}
+
+.btn-danger {
+  color: #ff8b83;
+  border-color: rgba(255, 90, 80, 0.28);
+}
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 90, 80, 0.22), rgba(255, 90, 80, 0.12));
+}
+
+.btn-sm {
+  padding: 6px 11px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.btn-icon {
+  padding: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 15px;
+}
+
+/* -------------------------------------------------------------- inputs --- */
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: var(--r-control);
+  background: var(--sunken);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--inset);
+  font-size: 14px;
+  transition: border-color var(--fast), box-shadow var(--fast);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.input:focus,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--inset), 0 0 0 2px var(--accent-glow);
+}
+
+.select {
+  appearance: none;
+  background: var(--control-fill);
+  box-shadow: var(--lift-1);
+  border-color: var(--edge);
+  padding-right: 34px;
+  cursor: pointer;
+  background-image: linear-gradient(180deg, var(--control-top), var(--control-bottom)),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23a8a8b4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat, no-repeat;
+  background-position: center, right 12px center;
+}
+.select option {
+  background: #22222a;
+  color: #f2f2f5;
+}
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+.field > span {
+  display: block;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+
+/* -------------------------------------------------------------- toggle --- */
+
+.toggle {
+  flex: none;
+  width: 46px;
+  height: 26px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, #33333c, #2a2a32);
+  box-shadow: var(--inset);
+  border: 1px solid var(--hairline-strong);
+  position: relative;
+  transition: background var(--med), box-shadow var(--med);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #d4d4dc);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: transform var(--spring);
+}
+
+.toggle[data-on='true'] {
+  background: var(--accent-fill);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  border-color: color-mix(in srgb, var(--accent) 60%, black);
+}
+.toggle[data-on='true']::after {
+  transform: translateX(20px);
+}
+
+/* -------------------------------------------------------------- slider --- */
+
+.slider {
+  flex: none;
+  width: 190px;
+  height: 22px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 99px;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent) var(--pct, 50%),
+    #34343d var(--pct, 50%),
+    #34343d 100%
+  );
+  box-shadow: var(--inset);
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #dcdce4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 3px 8px rgba(0, 0, 0, 0.35);
+  transition: transform var(--fast);
+}
+.slider:active::-webkit-slider-thumb {
+  transform: scale(1.14);
+}
+
+.slider::-moz-range-track {
+  height: 6px;
+  border-radius: 99px;
+  background: #34343d;
+}
+.slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--accent);
+}
+.slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+
+/* -------------------------------------------------------------- avatar --- */
+
+.avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--av, #444);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2),
+              inset 0 -2px 6px rgba(0, 0, 0, 0.3),
+              0 1px 4px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  line-height: 1;
+  position: relative;
+  overflow: hidden;
+}
+.avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%);
+}
+
+/* An uploaded picture fills the whole disc; the sheen still sits on top. */
+.avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* -------------------------------------------------------------- modals --- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 4, 8, 0.62);
+  backdrop-filter: blur(14px) saturate(120%);
+  animation: fade var(--med) both;
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-fill);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  box-shadow: var(--lift-3);
+  animation: pop var(--spring) both;
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--sheen);
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.modal-body {
+  padding: 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-foot {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+.err {
+  color: #ff9089;
+  font-size: 13px;
+  margin: 10px 0 0;
+  min-height: 18px;
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 13px;
+  line-height: 1.6;
+}
