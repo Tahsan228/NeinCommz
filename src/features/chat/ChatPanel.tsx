@@ -393,13 +393,31 @@ export function ChatPanel({
     pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
   };
 
-  useEffect(() => {
+  /**
+   * Pin to the newest message.
+   *
+   * Called more than once on purpose. Setting scrollTop the moment a page of
+   * history arrives lands short, because the bubbles have not been laid out
+   * yet and the images inside them have no height — which is why opening the
+   * app left you part-way up the conversation instead of at the bottom.
+   */
+  const stickToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (pinnedRef.current || prefs.autoScroll) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages.length, typers.size, prefs.autoScroll]);
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (!pinnedRef.current && !prefs.autoScroll) return;
+    stickToBottom();
+    const frame = requestAnimationFrame(stickToBottom);
+    // One more after layout has certainly settled, for slow first paints.
+    const late = window.setTimeout(stickToBottom, 150);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(late);
+    };
+  }, [messages.length, typers.size, prefs.autoScroll, roomId, loading, stickToBottom]);
 
   /* -------------------------------------------------------------- send --- */
   const send = useCallback(
@@ -722,6 +740,11 @@ export function ChatPanel({
                               : undefined
                           }
                           onClick={() => setLightbox(m.media_url)}
+                          onLoad={() => {
+                            // A picture that has just been measured pushes
+                            // everything below it down.
+                            if (pinnedRef.current) stickToBottom();
+                          }}
                         />
                       </div>
                       {m.body && (

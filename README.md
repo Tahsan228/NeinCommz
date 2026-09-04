@@ -222,6 +222,15 @@ the ball is going rather than where it is, and never shoot towards their own
 net. They are there to make up the numbers, so they earn nobody anything and
 carry no rating.
 
+### On a phone
+Small screens get a two-tab layout — **who's around** and **chat** — rather
+than three squeezed columns, with the status board as the default because that
+is what the app is for when you are not at a desk. Games are deliberately
+absent there: Haxball needs two hands on a keyboard and chess needs a board
+bigger than a thumb, and a half-working game is worse than an honestly missing
+one. Everything else — chat, DMs, groups, status, the shop, leaderboards,
+profiles, settings — works.
+
 ### The dashboard
 A small board above the status list: the time, local weather from Open-Meteo
 (no key, no account — location is asked for once and kept in your browser at
@@ -301,7 +310,7 @@ glow behind the page.
 npm test
 ```
 
-235 tests covering the parts where bugs actually hide: the status engine's
+249 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
@@ -312,7 +321,8 @@ stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
 against itself; a Haxball bot must never kick towards its own goal), the
 leaderboard's ordering and its rule that nobody is ever dropped from the table,
 who gets credited with a goal and an assist, what happens to a room when its
-host closes the tab (exactly one client may act on it), and two jsdom tests — one that mounts the whole app and walks through
+host closes the tab (exactly one client may act on it), what each power-up
+orb actually does, and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 

@@ -17,6 +17,7 @@ import {
   BALL_R,
   CELEBRATION_TICKS,
   DEFAULT_RULES,
+  ORB_RADIUS,
   NO_INPUT,
   PITCH_PRESETS,
   PLAYER_R,
@@ -32,11 +33,37 @@ import {
   type Input,
   type PitchSize,
   type Rules,
+  type GoalInfo,
   type Snapshot,
   type World,
 } from './physics';
 
 const TEAM_COLOR = ['#e0574f', '#4a9de0'];
+
+const BUFF_COLOR: Record<string, string> = {
+  speed: '#4fd695',
+  power: '#f0b429',
+  control: '#4a9de0',
+  aim: '#c07aff',
+  teleport: '#ff6bd6',
+};
+
+const BUFF_LABEL: Record<string, string> = {
+  speed: 'Speed',
+  power: 'Power',
+  control: 'Control',
+  aim: 'Aim',
+  teleport: 'Teleport',
+};
+
+/** How each power-up reads on the pitch. Rare ones get a white rim. */
+const ORB_LOOK: Record<string, { color: string; letter: string; rare: boolean; label: string }> = {
+  speed: { color: '#4fd695', letter: 'S', rare: false, label: 'Speed' },
+  power: { color: '#f0b429', letter: 'P', rare: false, label: 'Shot power' },
+  control: { color: '#4a9de0', letter: 'C', rare: false, label: 'Control' },
+  aim: { color: '#c07aff', letter: 'A', rare: true, label: 'Aim' },
+  teleport: { color: '#ff6bd6', letter: 'T', rare: true, label: 'Teleport' },
+};
 const TEAM_NAME = ['Red', 'Blue'];
 const TICK_MS = 1000 / 60;
 const BROADCAST_EVERY = 2; // every other tick -> ~30 snapshots/second
@@ -127,6 +154,7 @@ export function HaxballGame({
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [clock, setClock] = useState(0);
   const [myCharge, setMyCharge] = useState(0);
+  const [myBuffs, setMyBuffs] = useState<{ kind: string; left: number }[]>([]);
   const [ready, setReady] = useState(false);
 
   const pitch = PITCH_PRESETS[state.rules.pitchSize] ?? PITCH_PRESETS.normal;
@@ -326,7 +354,19 @@ export function HaxballGame({
       const w = worldRef.current;
       if (!w) return;
       setClock(secondsRemaining(w));
-      setMyCharge(w.players.find((p) => p.id === me)?.charge ?? 0);
+      const mine = w.players.find((p) => p.id === me);
+      setMyCharge(mine?.charge ?? 0);
+
+      if (mine) {
+        const carried: { kind: string; left: number }[] = [];
+        for (const kind of ['speed', 'power', 'control', 'aim'] as const) {
+          if (mine.buffs[kind] > 0) carried.push({ kind, left: Math.ceil(mine.buffs[kind] / 60) });
+        }
+        if (mine.teleports > 0) carried.push({ kind: 'teleport', left: mine.teleports });
+        setMyBuffs(carried);
+      } else {
+        setMyBuffs([]);
+      }
     }, 100);
     return () => window.clearInterval(id);
   }, [state.phase, me]);
@@ -346,14 +386,22 @@ export function HaxballGame({
 
       // Record the run of play. Everyone keeps their own tape from what they
       // are already drawing, so a replay costs nothing on the wire.
+      //
+      // Only when the world has actually moved on: this loop runs at 60fps but
+      // a watching client only hears from the host 30 times a second, so
+      // recording every frame filled the tape with duplicate ticks. The replay
+      // then covered half the time it claimed to and stuttered through pairs
+      // of identical frames.
       if (w.celebrating === 0 && w.countdown === 0 && !w.finished) {
-        tapeRef.current.push(snapshot(w));
-        // Roughly the last six seconds at 60fps.
-        if (tapeRef.current.length > 360) tapeRef.current.shift();
+        const tape = tapeRef.current;
+        if (tape.length === 0 || tape[tape.length - 1].t !== w.tick) {
+          tape.push(snapshot(w));
+          if (tape.length > 360) tape.shift();
+        }
       }
 
       // Freeze the tape the instant a goal goes in.
-      if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 30) {
+      if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 12) {
         // About four seconds of build-up: long enough to show the move that
         // led to the goal, short enough that the replay is not a highlight reel.
         clipRef.current = tapeRef.current.slice(-240);
@@ -534,6 +582,17 @@ export function HaxballGame({
       <div className="canvas-frame">
         <canvas ref={canvasRef} width={pitch.w} height={pitch.h} />
       </div>
+
+      {myBuffs.length > 0 && (
+        <div className="buff-row">
+          {myBuffs.map((b) => (
+            <span key={b.kind} className="buff" style={{ ['--buff' as string]: BUFF_COLOR[b.kind] }}>
+              {BUFF_LABEL[b.kind]}
+              <b>{b.kind === 'teleport' ? `×${b.left}` : `${b.left}s`}</b>
+            </span>
+          ))}
+        </div>
+      )}
 
       {iAmPlaying ? (
         <div style={{ width: 'min(420px, 90%)' }}>
@@ -764,9 +823,9 @@ function HaxLobby({
                   value={String(state.rules.chargeRate)}
                   onChange={(e) => patchRules({ chargeRate: Number(e.target.value) })}
                 >
-                  <option value="0.012">Slow (~1.4s)</option>
-                  <option value="0.022">Normal (~0.8s)</option>
-                  <option value="0.04">Fast (~0.4s)</option>
+                  <option value="0.0037">Slow — 4.5s to full</option>
+                  <option value="0.00556">Normal — 3s to full</option>
+                  <option value="0.0111">Fast — 1.5s to full</option>
                 </select>
               </Setting>
 
@@ -808,6 +867,22 @@ function HaxLobby({
                 </select>
               </Setting>
             </div>
+
+            <Setting label="Power-up orbs">
+              <select
+                className="select"
+                value={state.rules.powerUps ? 'on' : 'off'}
+                onChange={(e) => patchRules({ powerUps: e.target.value === 'on' })}
+              >
+                <option value="off">Off — a plain match</option>
+                <option value="on">On — orbs around the pitch</option>
+              </select>
+            </Setting>
+            <p className="row-sub" style={{ margin: '-4px 0 10px' }}>
+              Speed, shot power and control turn up often; aim and teleport are
+              rare. Run over one to take it — a teleport is banked until you
+              reach for a ball too far away.
+            </p>
 
             <div className="label" style={{ padding: '14px 0 10px' }}>Computer players</div>
             <p className="row-sub" style={{ margin: '0 0 10px' }}>
@@ -1036,30 +1111,60 @@ function drawPitch(
   // The aim guide is drawn only while the local player is charging AND the
   // ball is within reach. Holding the key across the pitch used to draw a line
   // to a ball nobody could hit.
+  // A fixed run of dots. It says where the ball will go, and nothing else —
+  // the power meter already says how hard, so a guide that grows with charge
+  // was saying the same thing twice and making the pitch look busy.
   const mine = w.players.find((q) => q.id === me);
   if (mine && mine.charge > 0.01 && canKick(mine, w.ball)) {
-    const reach = 44 + mine.charge * 190;
+    const dots = 7;
+    const gap = 22;
     ctx.save();
-    ctx.setLineDash([6, 7]);
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = `rgba(255,255,255,${0.3 + mine.charge * 0.55})`;
-    ctx.beginPath();
-    ctx.moveTo(w.ball.x, w.ball.y);
-    ctx.lineTo(w.ball.x + mine.aimX * reach, w.ball.y + mine.aimY * reach);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    for (let i = 1; i <= dots; i++) {
+      const fade = 1 - (i - 1) / dots;
+      ctx.beginPath();
+      ctx.arc(w.ball.x + mine.aimX * i * gap, w.ball.y + mine.aimY * i * gap, 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${(0.25 + mine.charge * 0.5) * fade})`;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
-    // A small arrowhead so the direction reads at a glance.
-    const tipX = w.ball.x + mine.aimX * reach;
-    const tipY = w.ball.y + mine.aimY * reach;
-    const ang = Math.atan2(mine.aimY, mine.aimX);
+  // Power-up orbs, under the players so nobody is hidden behind one.
+  for (const orb of w.orbs) {
+    if (!orb.active) continue;
+    const look = ORB_LOOK[orb.kind];
+    const bob = Math.sin(w.tick / 18 + orb.id) * 3;
+
+    ctx.save();
+    ctx.translate(orb.x, orb.y + bob);
+    ctx.rotate(w.tick / 40 + orb.id);
+
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, ORB_RADIUS + 8);
+    glow.addColorStop(0, look.color);
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = glow;
+    ctx.fillRect(-ORB_RADIUS - 8, -ORB_RADIUS - 8, (ORB_RADIUS + 8) * 2, (ORB_RADIUS + 8) * 2);
+    ctx.globalAlpha = 1;
+
+    // A diamond, so the rare ones read differently from the ball at a glance.
     ctx.beginPath();
-    ctx.moveTo(tipX, tipY);
-    ctx.lineTo(tipX - Math.cos(ang - 0.4) * 11, tipY - Math.sin(ang - 0.4) * 11);
-    ctx.moveTo(tipX, tipY);
-    ctx.lineTo(tipX - Math.cos(ang + 0.4) * 11, tipY - Math.sin(ang + 0.4) * 11);
+    ctx.moveTo(0, -ORB_RADIUS);
+    ctx.lineTo(ORB_RADIUS, 0);
+    ctx.lineTo(0, ORB_RADIUS);
+    ctx.lineTo(-ORB_RADIUS, 0);
+    ctx.closePath();
+    ctx.fillStyle = look.color;
+    ctx.fill();
+    ctx.lineWidth = look.rare ? 2.5 : 1.5;
+    ctx.strokeStyle = look.rare ? '#ffffff' : 'rgba(0,0,0,0.45)';
     ctx.stroke();
     ctx.restore();
+
+    ctx.font = '800 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fillText(look.letter, orb.x, orb.y + bob + 4);
   }
 
   // Players.
@@ -1103,6 +1208,23 @@ function drawPitch(
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.fillText(name, pl.x, pl.y - PLAYER_R - 9);
     }
+
+    // What they are carrying, as small pips under the disc.
+    const carried: string[] = [];
+    if (pl.buffs.speed > 0) carried.push('speed');
+    if (pl.buffs.power > 0) carried.push('power');
+    if (pl.buffs.control > 0) carried.push('control');
+    if (pl.buffs.aim > 0) carried.push('aim');
+    for (let i = 0; i < pl.teleports; i++) carried.push('teleport');
+
+    carried.forEach((kind, i) => {
+      const look = ORB_LOOK[kind as keyof typeof ORB_LOOK];
+      const spread = (i - (carried.length - 1) / 2) * 11;
+      ctx.beginPath();
+      ctx.arc(pl.x + spread, pl.y + PLAYER_R + 8, 4, 0, Math.PI * 2);
+      ctx.fillStyle = look.color;
+      ctx.fill();
+    });
   }
 
   // Ball, with a soft shadow so it reads as being above the pitch. Its design
@@ -1149,49 +1271,37 @@ function drawPitch(
     ctx.fillText('Get to your side', midX, midY + 76);
   }
 
-  if (w.celebrating > 0) {
-    ctx.fillStyle = 'rgba(0,0,0,0.42)';
-    ctx.fillRect(0, 0, p.w, p.h);
-
-    const scorer = w.lastTouch ? profiles.get(w.lastTouch) : undefined;
-    const worn = cosmetics && w.lastTouch ? cosmetics.equippedOf(w.lastTouch) : {};
-    const total = cosmetics?.celebrateTotal || 1;
-    // Effects run forwards, but `celebrating` counts down.
-    const t = 1 - w.celebrating / total;
-
-    if (cosmetics) {
-      paintGoalEffect(worn.goalfx, ctx, p.w, p.h, t, scorer?.accent_color ?? '#e0574f');
-    }
-
-    ctx.font = '700 46px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = w.lastScorer === 0 ? TEAM_COLOR[0] : TEAM_COLOR[1];
-    ctx.fillText('GOAL', midX, midY);
-
-    const shout = celebrationText(worn.celebration);
-    if (shout) {
-      ctx.font = '700 24px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.92)';
-      ctx.fillText(shout, midX, midY + 38);
-    }
-
-    if (scorer) {
-      ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fillText(scorer.display_name, midX, midY + 64);
-    }
-  }
 }
 
 /* ======================================================= goal sequence ==== */
 
-const MOMENT_END = 0.3;
-const REPLAY_END = 0.86;
+/**
+ * The three acts, as fractions of the celebration, and how much they overlap.
+ *
+ * The overlap is the whole trick: each act is drawn over the one before it
+ * with a rising alpha, so the picture never cuts and never dips to black. The
+ * only darkening anywhere in the game belongs to the countdown.
+ */
+const MOMENT_END = 0.34;
+const REPLAY_END = 0.88;
+const CROSSFADE = 0.05;
 
 interface Tape {
   clip: Snapshot[];
   replayWorld: World | null;
   total: number;
+}
+
+/** 0 outside the window, ramping to 1 across the fade at each edge. */
+function envelope(t: number, from: number, to: number, fade = CROSSFADE): number {
+  if (t <= from - fade || t >= to + fade) return 0;
+  const rising = (t - (from - fade)) / (fade * 2);
+  const falling = ((to + fade) - t) / (fade * 2);
+  return Math.max(0, Math.min(1, Math.min(rising, falling)));
+}
+
+function easeOut(t: number): number {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 }
 
 /** Whoever this is, said the way a commentator would. */
@@ -1201,16 +1311,12 @@ function nameFor(id: string | null, profiles: Map<UUID, Profile>): string {
   return profiles.get(id)?.display_name ?? 'Somebody';
 }
 
-function easeOut(t: number): number {
-  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
-}
-
 /**
  * Where in the clip to be at this point of the replay.
  *
- * Deliberately not linear: it runs at normal speed up to the shot, crawls
- * through the strike itself, then releases. A replay that plays the whole
- * thing at one speed shows you everything except the bit you wanted to see.
+ * Deliberately not linear: normal speed up to the shot, a crawl through the
+ * strike, then a release. A replay at one speed shows you everything except
+ * the bit you wanted to see.
  */
 function replayFrame(progress: number, length: number, shotIndex: number): number {
   const last = length - 1;
@@ -1219,27 +1325,28 @@ function replayFrame(progress: number, length: number, shotIndex: number): numbe
   const slowFrom = Math.max(0, shotIndex - 22);
   const slowTo = Math.min(last, shotIndex + 16);
 
-  if (progress < 0.5) {
-    return (progress / 0.5) * slowFrom;
-  }
-  if (progress < 0.82) {
-    // A third of the timeline spent on well under a second of play.
-    return slowFrom + ((progress - 0.5) / 0.32) * (slowTo - slowFrom);
-  }
+  if (progress < 0.5) return (progress / 0.5) * slowFrom;
+  if (progress < 0.82) return slowFrom + ((progress - 0.5) / 0.32) * (slowTo - slowFrom);
   return slowTo + ((progress - 0.82) / 0.18) * (last - slowTo);
 }
 
-/** Run `draw` with the camera pushed in on a point. */
+/**
+ * Run `draw` with a point of the pitch pinned to a point of the screen.
+ *
+ * Anchoring rather than always centring is what lets the scorer sit on the
+ * right while the caption occupies the left.
+ */
 function withCamera(
   ctx: CanvasRenderingContext2D,
-  w: World,
   focus: { x: number; y: number } | null,
   zoom: number,
+  anchorX: number,
+  anchorY: number,
   draw: () => void,
 ): void {
   ctx.save();
-  if (focus && zoom > 1.001) {
-    ctx.translate(w.pitch.w / 2, w.pitch.h / 2);
+  if (focus) {
+    ctx.translate(anchorX, anchorY);
     ctx.scale(zoom, zoom);
     ctx.translate(-focus.x, -focus.y);
   }
@@ -1280,6 +1387,44 @@ function goalMouth(w: World, side: 0 | 1): { x: number; y: number } {
   return { x: side === 0 ? left : right, y: w.pitch.h / 2 };
 }
 
+/** The caption down the left: GOAL, who scored, who set it up. */
+function goalCard(
+  ctx: CanvasRenderingContext2D,
+  w: World,
+  goal: GoalInfo | null,
+  scorerId: string | null,
+  profiles: Map<UUID, Profile>,
+  rise: number,
+): void {
+  if (rise <= 0) return;
+  const p = w.pitch;
+  const x = 26;
+  const slide = (1 - rise) * 26;
+
+  ctx.save();
+  ctx.globalAlpha *= Math.min(1, rise);
+  ctx.textAlign = 'left';
+
+  ctx.font = '800 54px system-ui, sans-serif';
+  ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
+  ctx.fillText('GOAL', x - slide, p.h * 0.45);
+
+  ctx.font = '700 22px system-ui, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(nameFor(scorerId, profiles), x - slide, p.h * 0.45 + 32);
+
+  ctx.font = '600 14px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.62)';
+  if (goal?.ownGoal) {
+    ctx.fillText('own goal', x - slide, p.h * 0.45 + 54);
+  } else if (goal?.assist) {
+    ctx.fillText(`assist  ${nameFor(goal.assist, profiles)}`, x - slide, p.h * 0.45 + 54);
+  } else {
+    ctx.fillText('unassisted', x - slide, p.h * 0.45 + 54);
+  }
+  ctx.restore();
+}
+
 function drawGoalSequence(
   ctx: CanvasRenderingContext2D,
   w: World,
@@ -1297,12 +1442,19 @@ function drawGoalSequence(
   const focus = scorer ?? (goal ? { x: goal.x, y: goal.y } : null);
   const net = goalMouth(w, goal?.side ?? 1);
 
-  /* ------------------------------------------------ 1. hold on the scorer */
-  if (t < MOMENT_END) {
-    const local = t / MOMENT_END;
-    const zoom = 1 + 1.15 * easeOut(local / 0.45);
+  const aMoment = envelope(t, 0, MOMENT_END);
+  const aReplay = envelope(t, MOMENT_END, REPLAY_END);
+  const aRestart = envelope(t, REPLAY_END, 1);
 
-    withCamera(ctx, w, focus, zoom, () => {
+  /* ------------------------------------------------ 1. hold on the scorer */
+  if (aMoment > 0) {
+    const local = Math.min(1, t / MOMENT_END);
+    const zoom = 1 + 1.1 * easeOut(local / 0.4);
+    // The player is pinned to the right so the caption has the left third.
+    const anchorX = p.w * (0.5 + 0.18 * easeOut(local / 0.4));
+
+    ctx.globalAlpha = aMoment;
+    withCamera(ctx, focus, zoom, anchorX, p.h / 2, () => {
       drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
 
       if (scorer) {
@@ -1314,32 +1466,29 @@ function drawGoalSequence(
         ctx.stroke();
       }
 
-      // The effect erupts from the net, in world space, so it stays anchored
-      // to the goal as the camera moves.
+      // The effect erupts from the net it went into, in world space, so it
+      // stays anchored to the goal while the camera moves.
       if (scorerId) {
         paintGoalEffect(
           cosmetics.equippedOf(scorerId).goalfx,
           ctx,
           p.w,
           p.h,
-          Math.min(1, local / 0.8),
+          Math.min(1, local / 0.75),
           profiles.get(scorerId)?.accent_color ?? TEAM_COLOR[goal?.team ?? 0],
           net.x,
           net.y,
         );
       }
 
-      // The celebration pops out of the player who scored, not from under a
-      // banner at the bottom of the screen.
+      // The celebration pops out of the scorer on a little tail.
       const shout = scorerId ? celebrationText(cosmetics.equippedOf(scorerId).celebration) : '';
       if (shout && scorer && !goal?.ownGoal) {
-        const pop = easeOut((local - 0.12) / 0.28);
+        const pop = easeOut((local - 0.12) / 0.26);
         if (pop > 0) {
           ctx.save();
           ctx.translate(scorer.x, scorer.y - PLAYER_R - 18);
           ctx.scale(pop, pop);
-          ctx.globalAlpha = Math.min(1, pop);
-
           ctx.font = '800 15px system-ui, sans-serif';
           ctx.textAlign = 'center';
           const width = ctx.measureText(shout).width + 20;
@@ -1348,7 +1497,6 @@ function drawGoalSequence(
           ctx.roundRect(-width / 2, -17, width, 24, 12);
           ctx.fillStyle = TEAM_COLOR[scorer.team];
           ctx.fill();
-          // A little tail, so it reads as coming out of the player.
           ctx.beginPath();
           ctx.moveTo(-5, 6);
           ctx.lineTo(0, 13);
@@ -1362,36 +1510,14 @@ function drawGoalSequence(
       }
     });
 
-    letterbox(ctx, w, local / 0.35);
-
-    // Titles live inside the bars, where they cannot cover the player.
-    const rise = easeOut((local - 0.15) / 0.35);
-    if (rise > 0) {
-      const bar = p.h * 0.12;
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, rise);
-      ctx.textAlign = 'center';
-
-      ctx.font = '800 26px system-ui, sans-serif';
-      ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
-      ctx.fillText('GOAL', p.w / 2, bar * 0.68 - (1 - rise) * 14);
-
-      ctx.font = '700 18px system-ui, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      const who = nameFor(scorerId, profiles);
-      ctx.fillText(
-        goal?.ownGoal ? `${who} — own goal` : `${who} scored`,
-        p.w / 2,
-        p.h - bar * 0.38 + (1 - rise) * 14,
-      );
-      ctx.restore();
-    }
-    return;
+    letterbox(ctx, w, local / 0.3);
+    goalCard(ctx, w, goal, scorerId, profiles, easeOut((local - 0.1) / 0.3));
+    ctx.globalAlpha = 1;
   }
 
   /* -------------------------------------------------------- 2. the replay */
-  if (t < REPLAY_END && tape.clip.length > 1 && tape.replayWorld) {
-    const local = (t - MOMENT_END) / (REPLAY_END - MOMENT_END);
+  if (aReplay > 0 && tape.clip.length > 1 && tape.replayWorld) {
+    const local = Math.min(1, Math.max(0, (t - MOMENT_END) / (REPLAY_END - MOMENT_END)));
     const clip = tape.clip;
 
     let shotIndex = clip.length - 1;
@@ -1405,16 +1531,13 @@ function drawGoalSequence(
     const exact = replayFrame(local, clip.length, shotIndex);
     const i = Math.min(clip.length - 2, Math.max(0, Math.floor(exact)));
     const rw = tape.replayWorld;
-    blendInto(rw, clip[i], clip[i + 1], exact - i);
+    blendInto(rw, clip[i], clip[i + 1], Math.min(1, Math.max(0, exact - i)));
     rw.celebrating = 0;
     rw.countdown = 0;
     rw.goal = null;
 
-    // The camera follows the ball through the move, easing in from the wide
-    // shot so the cut out of the celebration is not a jolt.
-    const track = easeOut(local / 0.18);
-    const zoom = 1 + 0.55 * track;
-    withCamera(ctx, w, { x: rw.ball.x, y: rw.ball.y }, zoom, () => {
+    ctx.globalAlpha = aReplay;
+    withCamera(ctx, { x: rw.ball.x, y: rw.ball.y }, 1.5, p.w / 2, p.h / 2, () => {
       drawPitch(ctx, rw, me, profiles, {
         trail: [],
         equippedOf: cosmetics.equippedOf,
@@ -1430,22 +1553,22 @@ function drawGoalSequence(
     ctx.textAlign = 'left';
     ctx.font = '700 15px system-ui, sans-serif';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(nameFor(scorerId, profiles), 18, p.h - bar * 0.38);
+    ctx.fillText(nameFor(scorerId, profiles), 18, p.h - bar * 0.42);
 
     if (goal?.assist) {
       ctx.font = '600 13px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18, p.h - bar * 0.38 + 17);
+      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18, p.h - bar * 0.42 + 17);
     }
 
     ctx.textAlign = 'right';
     ctx.font = '700 16px system-ui, sans-serif';
     ctx.fillStyle = TEAM_COLOR[0];
-    ctx.fillText(String(w.score.red), p.w - 46, p.h - bar * 0.38);
+    ctx.fillText(String(w.score.red), p.w - 46, p.h - bar * 0.42);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('–', p.w - 32, p.h - bar * 0.38);
+    ctx.fillText('–', p.w - 32, p.h - bar * 0.42);
     ctx.fillStyle = TEAM_COLOR[1];
-    ctx.fillText(String(w.score.blue), p.w - 16, p.h - bar * 0.38);
+    ctx.fillText(String(w.score.blue), p.w - 16, p.h - bar * 0.42);
     ctx.restore();
 
     if (local > 0.5 && local < 0.82) {
@@ -1456,15 +1579,17 @@ function drawGoalSequence(
       ctx.fillText('SLOW MOTION', p.w / 2, bar * 0.62);
       ctx.restore();
     }
-    return;
+    ctx.globalAlpha = 1;
   }
 
   /* ------------------------------------------- 3. back to a live wide shot */
-  // No dimming here: the pitch stays bright right up to the restart, and the
-  // only darkening in the whole game belongs to the countdown.
-  const local = (t - REPLAY_END) / (1 - REPLAY_END);
-  drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
-  letterbox(ctx, w, 1 - local);
+  if (aRestart > 0) {
+    const local = Math.min(1, Math.max(0, (t - REPLAY_END) / (1 - REPLAY_END)));
+    ctx.globalAlpha = aRestart;
+    drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
+    letterbox(ctx, w, 1 - local);
+    ctx.globalAlpha = 1;
+  }
 }
 
 /** The corner marker and progress bar that say "this is not live". */

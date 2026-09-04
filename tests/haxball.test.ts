@@ -76,11 +76,21 @@ describe('kicking', () => {
     const tap = nearBall();
     step(tap, new Map([['a', HOLD]]));
 
+    // Three seconds of dribbling is a full wind-up.
     const wound = nearBall();
-    for (let i = 0; i < 40; i++) step(wound, new Map([['a', RELEASE]]));
+    for (let i = 0; i < 180; i++) step(wound, new Map([['a', RELEASE]]));
+    expect(wound.players[0].charge).toBeCloseTo(1, 1);
     step(wound, new Map([['a', HOLD]]));
 
     expect(wound.ball.vx).toBeGreaterThan(tap.ball.vx * 1.6);
+  });
+
+  it('takes about three seconds to wind all the way up', () => {
+    const w = nearBall();
+    for (let i = 0; i < 90; i++) step(w, new Map([['a', RELEASE]]));
+    // Half the time, so about half the power.
+    expect(w.players[0].charge).toBeGreaterThan(0.4);
+    expect(w.players[0].charge).toBeLessThan(0.6);
   });
 
   it('fires on contact when the key is already down', () => {
@@ -126,7 +136,10 @@ describe('kicking', () => {
 describe('pace', () => {
   it('keeps players well under the old top speed', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
-    for (let i = 0; i < 240; i++) step(w, new Map([['a', RIGHT]]));
+    // Start from the left so a short run does not end against the far wall.
+    w.players[0].x = bounds(w.pitch).left + 40;
+    w.players[0].y = w.pitch.h / 2;
+    for (let i = 0; i < 120; i++) step(w, new Map([['a', RIGHT]]));
     // The previous settings topped out near 6.6 px/tick; this is deliberately
     // about half that, which is the whole point of the change.
     expect(Math.hypot(w.players[0].vx, w.players[0].vy)).toBeLessThan(4);
@@ -135,11 +148,20 @@ describe('pace', () => {
   it('still lets a host wind the speed back up', () => {
     const slow = kickedOff([{ id: 'a', team: 0 }]);
     const fast = kickedOff([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, playerAccel: 0.4 });
-    for (let i = 0; i < 240; i++) {
-      step(slow, new Map([['a', RIGHT]]));
-      step(fast, new Map([['a', RIGHT]]));
-    }
-    expect(Math.abs(fast.players[0].vx)).toBeGreaterThan(Math.abs(slow.players[0].vx));
+
+    // Spawns are random now, so compare the top speed each one reaches rather
+    // than where they happen to be after a fixed run — a quick player simply
+    // reaches the far wall sooner and sits against it at nearly zero.
+    const topSpeed = (w: ReturnType<typeof kickedOff>) => {
+      let best = 0;
+      for (let i = 0; i < 90; i++) {
+        step(w, new Map([['a', RIGHT]]));
+        best = Math.max(best, Math.hypot(w.players[0].vx, w.players[0].vy));
+      }
+      return best;
+    };
+
+    expect(topSpeed(fast)).toBeGreaterThan(topSpeed(slow));
   });
 });
 

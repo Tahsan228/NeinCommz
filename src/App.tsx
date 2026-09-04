@@ -78,6 +78,9 @@ function Home() {
   const { tapLogo, armed } = useSecret();
   const [settings, setSettings] = useState(false);
   const [shop, setShop] = useState(false);
+  // Phones get a two-tab layout instead of three columns; games are left out
+  // entirely, because none of them are playable with a thumb on a 6in screen.
+  const [mobileTab, setMobileTab] = useState<'people' | 'chat'>('people');
   const [boards, setBoards] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
@@ -123,7 +126,28 @@ function Home() {
         </button>
       </div>
 
-      <div className="columns">
+      <nav className="mobile-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={mobileTab === 'people'}
+          data-on={mobileTab === 'people'}
+          onClick={() => setMobileTab('people')}
+        >
+          <Icon name="users" size={16} />
+          Who's around
+        </button>
+        <button
+          role="tab"
+          aria-selected={mobileTab === 'chat'}
+          data-on={mobileTab === 'chat'}
+          onClick={() => setMobileTab('chat')}
+        >
+          <Icon name="message" size={16} />
+          Chat
+        </button>
+      </nav>
+
+      <div className="columns" data-tab={mobileTab}>
         <Panel label="Chat" className="column-chat">
           <ChatColumn />
         </Panel>

@@ -27,6 +27,36 @@ export const PITCH_PRESETS: Record<'small' | 'normal' | 'big', Pitch> = {
 
 export type PitchSize = keyof typeof PITCH_PRESETS;
 
+/* ------------------------------------------------------------- power-ups - */
+
+export type OrbKind = 'speed' | 'power' | 'control' | 'aim' | 'teleport';
+
+/** Ordered, because a snapshot sends the index rather than the word. */
+export const ORB_KINDS: OrbKind[] = ['speed', 'power', 'control', 'aim', 'teleport'];
+
+export const ORB_RARE: OrbKind[] = ['aim', 'teleport'];
+
+export interface Orb {
+  id: number;
+  x: number;
+  y: number;
+  kind: OrbKind;
+  /** False while taken; counts down to a respawn. */
+  active: boolean;
+  respawnIn: number;
+}
+
+export const ORB_RADIUS = 13;
+/** How long a pick-up lasts, in ticks. */
+export const BUFF_TICKS = 60 * 10;
+const ORB_RESPAWN_TICKS = 60 * 12;
+const ORB_COUNT = 4;
+
+/** What each buff does to the rules while it is running. */
+export const SPEED_MULTIPLIER = 1.75;
+export const POWER_MULTIPLIER = 1.6;
+export const CONTROL_CHARGE_MULTIPLIER = 3;
+
 export const PITCH: Pitch = PITCH_PRESETS.normal;
 
 export const PLAYER_R = 15;
@@ -58,6 +88,8 @@ export interface Rules {
   /** Match length in seconds. 0 means no clock. */
   timeLimitSec: number;
   pitchSize: PitchSize;
+  /** Scatter power-up orbs around the pitch. */
+  powerUps: boolean;
 }
 
 // Deliberately sluggish: the old values crossed the pitch in about two
@@ -68,14 +100,16 @@ export const DEFAULT_RULES: Rules = {
   ballDamping: 0.99,
   // A bare touch already sends the ball a long way — power is a bonus for
   // shepherding it, not the difference between a kick and a nudge.
-  kickMin: 4.2,
-  kickMax: 9,
-  // Contact is brief, so power has to build quickly to be worth anything.
-  chargeRate: 0.045,
+  kickMin: 5,
+  kickMax: 11,
+  // Three seconds of dribbling to reach full power. Fast enough to be worth
+  // going for, slow enough that you have to actually protect the ball.
+  chargeRate: 1 / 180,
   maxBallSpeed: 18,
   scoreLimit: 5,
   timeLimitSec: 300,
   pitchSize: 'normal',
+  powerUps: false,
 };
 
 /**
@@ -125,6 +159,9 @@ export interface HaxPlayer extends Disc {
   /** Unit vector the next shot would travel along, for the aim guide. */
   aimX: number;
   aimY: number;
+  /** Ticks left on each pick-up, and how many teleports are banked. */
+  buffs: { speed: number; power: number; control: number; aim: number };
+  teleports: number;
 }
 
 export interface Input {
@@ -165,6 +202,8 @@ export interface World {
   touches: Touch[];
   /** Filled in the moment a goal goes in, and read by the replay overlay. */
   goal: GoalInfo | null;
+  /** Power-up orbs, empty unless the mode is switched on. */
+  orbs: Orb[];
 }
 
 export interface Touch {
@@ -230,15 +269,27 @@ export function secondsRemaining(w: World): number {
   return Math.max(0, w.rules.timeLimitSec - secondsElapsed(w));
 }
 
-export function kickoffPositions(players: HaxPlayer[], pitch: Pitch = PITCH): void {
+/**
+ * Put everyone somewhere in their own half.
+ *
+ * Deliberately not a fixed formation: identical kickoffs every time make the
+ * restart feel like a reset rather than a fresh start, and the same player
+ * always ends up first to the ball.
+ */
+export function kickoffPositions(
+  players: HaxPlayer[],
+  pitch: Pitch = PITCH,
+  random: () => number = Math.random,
+): void {
+  const { left, right, top, bottom } = bounds(pitch);
   const cx = pitch.w / 2;
-  const cy = pitch.h / 2;
-  const perTeam = [0, 0];
+
   for (const p of players) {
-    const i = perTeam[p.team]++;
-    const dir = p.team === 0 ? -1 : 1;
-    p.x = cx + dir * (110 + i * 58);
-    p.y = cy + (i % 2 === 0 ? -1 : 1) * Math.floor(i / 2 + 0.5) * 70;
+    // A band in your own half, kept clear of the centre circle and the walls.
+    const near = p.team === 0 ? left + 70 : cx + 90;
+    const far = p.team === 0 ? cx - 90 : right - 70;
+    p.x = near + random() * Math.max(1, far - near);
+    p.y = top + 40 + random() * Math.max(1, bottom - top - 80);
     p.vx = 0;
     p.vy = 0;
     p.charge = 0;
@@ -265,6 +316,8 @@ export function createWorld(
     kickHeld: false,
     aimX: 1,
     aimY: 0,
+    buffs: { speed: 0, power: 0, control: 0, aim: 0 },
+    teleports: 0,
   }));
   kickoffPositions(list, pitch);
   return {
@@ -282,7 +335,65 @@ export function createWorld(
     lastTouch: null,
     touches: [],
     goal: null,
+    orbs: rules.powerUps ? spawnOrbs(pitch) : [],
   };
+}
+
+/** A fresh scatter of orbs, weighted so the strong ones are uncommon. */
+export function spawnOrbs(pitch: Pitch, random: () => number = Math.random): Orb[] {
+  const { left, right, top, bottom } = bounds(pitch);
+  return Array.from({ length: ORB_COUNT }, (_, id) => ({
+    id,
+    x: left + 60 + random() * (right - left - 120),
+    y: top + 40 + random() * (bottom - top - 80),
+    kind: pickOrbKind(random),
+    active: true,
+    respawnIn: 0,
+  }));
+}
+
+export function pickOrbKind(random: () => number = Math.random): OrbKind {
+  // Roughly one in six is a rare one, so seeing an aim orb means something.
+  return random() < 0.17
+    ? ORB_RARE[Math.floor(random() * ORB_RARE.length)]
+    : (['speed', 'power', 'control'] as OrbKind[])[Math.floor(random() * 3)];
+}
+
+/** Move a taken orb somewhere new and give it a fresh kind. */
+function respawnOrb(orb: Orb, pitch: Pitch, random: () => number = Math.random): void {
+  const { left, right, top, bottom } = bounds(pitch);
+  orb.x = left + 60 + random() * (right - left - 120);
+  orb.y = top + 40 + random() * (bottom - top - 80);
+  orb.kind = pickOrbKind(random);
+  orb.active = true;
+  orb.respawnIn = 0;
+}
+
+/** Collect orbs and run down the clocks on everything already held. */
+function stepOrbs(w: World, random: () => number = Math.random): void {
+  for (const p of w.players) {
+    for (const key of ['speed', 'power', 'control', 'aim'] as const) {
+      if (p.buffs[key] > 0) p.buffs[key]--;
+    }
+  }
+
+  for (const orb of w.orbs) {
+    if (!orb.active) {
+      if (--orb.respawnIn <= 0) respawnOrb(orb, w.pitch, random);
+      continue;
+    }
+
+    for (const p of w.players) {
+      if (Math.hypot(p.x - orb.x, p.y - orb.y) > p.r + ORB_RADIUS) continue;
+
+      if (orb.kind === 'teleport') p.teleports = Math.min(3, p.teleports + 1);
+      else p.buffs[orb.kind] = BUFF_TICKS;
+
+      orb.active = false;
+      orb.respawnIn = ORB_RESPAWN_TICKS;
+      break;
+    }
+  }
 }
 
 export function resetKickoff(w: World): void {
@@ -333,6 +444,8 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
   const r = w.rules;
 
+  if (w.orbs.length) stepOrbs(w);
+
   for (const p of w.players) {
     const inp = inputs.get(p.id) ?? NO_INPUT;
     let ax = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
@@ -342,8 +455,9 @@ export function step(w: World, inputs: Map<string, Input>): void {
       ax *= Math.SQRT1_2;
       ay *= Math.SQRT1_2;
     }
-    p.vx = (p.vx + ax * r.playerAccel) * r.playerDamping;
-    p.vy = (p.vy + ay * r.playerAccel) * r.playerDamping;
+    const accel = r.playerAccel * (p.buffs.speed > 0 ? SPEED_MULTIPLIER : 1);
+    p.vx = (p.vx + ax * accel) * r.playerDamping;
+    p.vy = (p.vy + ay * accel) * r.playerDamping;
 
     if (p.cooldown > 0) p.cooldown--;
 
@@ -361,18 +475,46 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
     // Power comes from keeping the ball at your feet, not from holding a key.
     // Walking it forward winds up a shot; losing it drops everything you had.
-    p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + r.chargeRate) : 0;
+    const rate = r.chargeRate * (p.buffs.control > 0 ? CONTROL_CHARGE_MULTIPLIER : 1);
+    p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + rate) : 0;
 
     // The key is intent, and it fires the moment there is something to hit —
     // so you can run at a loose ball with it held and strike on contact.
     p.kickHeld = inp.kick;
+
     if (inp.kick && inReach && p.cooldown === 0) {
-      const power = r.kickMin + p.charge * (r.kickMax - r.kickMin);
-      w.ball.vx += p.aimX * power;
-      w.ball.vy += p.aimY * power;
+      let dirX = p.aimX;
+      let dirY = p.aimY;
+
+      // An aim orb straightens the shot towards the goal mouth rather than
+      // wherever you happened to be standing.
+      if (p.buffs.aim > 0) {
+        const { left, right } = bounds(w.pitch);
+        const tx = p.team === 0 ? right : left;
+        const ty = w.pitch.h / 2;
+        const len = Math.hypot(tx - w.ball.x, ty - w.ball.y) || 1;
+        dirX = (tx - w.ball.x) / len;
+        dirY = (ty - w.ball.y) / len;
+      }
+
+      const power =
+        (r.kickMin + p.charge * (r.kickMax - r.kickMin)) *
+        (p.buffs.power > 0 ? POWER_MULTIPLIER : 1);
+
+      w.ball.vx += dirX * power;
+      w.ball.vy += dirY * power;
       p.charge = 0;
       p.cooldown = KICK_COOLDOWN;
       noteTouch(w, p);
+    } else if (inp.kick && !inReach && p.teleports > 0 && p.cooldown === 0) {
+      // A banked teleport is spent by reaching for a ball you cannot reach.
+      const len = Math.hypot(w.ball.x - p.x, w.ball.y - p.y) || 1;
+      p.x = w.ball.x - ((w.ball.x - p.x) / len) * (p.r + w.ball.r + 4);
+      p.y = w.ball.y - ((w.ball.y - p.y) / len) * (p.r + w.ball.r + 4);
+      p.vx = 0;
+      p.vy = 0;
+      p.teleports--;
+      p.cooldown = KICK_COOLDOWN * 3;
     }
   }
 
@@ -585,8 +727,13 @@ export function confineBall(b: Disc, pitch: Pitch = PITCH): 0 | 1 | null {
 export interface Snapshot {
   t: number;
   b: [number, number, number, number];
-  /** id, x, y, vx, vy, team, charge, aimX, aimY, kickHeld */
-  p: [string, number, number, number, number, number, number, number, number, number][];
+  /** id, x, y, vx, vy, team, charge, aimX, aimY, kickHeld, speed, power, control, aim, teleports */
+  p: [
+    string, number, number, number, number, number, number, number, number, number,
+    number, number, number, number, number,
+  ][];
+  /** orbs: id, x, y, kind index, active */
+  o: [number, number, number, number, number][];
   s: [number, number];
   c: number;
   /** countdown ticks remaining */
@@ -615,7 +762,19 @@ export function snapshot(w: World): Snapshot {
       round(p.aimX),
       round(p.aimY),
       p.kickHeld ? 1 : 0,
+      p.buffs.speed,
+      p.buffs.power,
+      p.buffs.control,
+      p.buffs.aim,
+      p.teleports,
     ]) as Snapshot['p'],
+    o: w.orbs.map((o) => [
+      o.id,
+      round(o.x),
+      round(o.y),
+      ORB_KINDS.indexOf(o.kind),
+      o.active ? 1 : 0,
+    ]) as Snapshot['o'],
     s: [w.score.red, w.score.blue],
     c: w.celebrating,
     k: w.countdown,
@@ -642,7 +801,20 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 
   const seen = new Set<string>();
-  for (const [id, x, y, vx, vy, team, charge, aimX, aimY, held] of s.p) {
+  // Orbs are small and few, so they are simply replaced wholesale.
+  w.orbs = (s.o ?? []).map(([id, x, y, kind, active]) => ({
+    id,
+    x,
+    y,
+    kind: ORB_KINDS[kind] ?? 'speed',
+    active: active === 1,
+    respawnIn: 0,
+  }));
+
+  for (const [
+    id, x, y, vx, vy, team, charge, aimX, aimY, held,
+    speed, power, control, aim, teleports,
+  ] of s.p) {
     seen.add(id);
     let p = w.players.find((q) => q.id === id);
     if (!p) {
@@ -660,6 +832,8 @@ export function applySnapshot(w: World, s: Snapshot): void {
         kickHeld: false,
         aimX: 1,
         aimY: 0,
+        buffs: { speed: 0, power: 0, control: 0, aim: 0 },
+        teleports: 0,
       };
       w.players.push(p);
     }
@@ -672,6 +846,8 @@ export function applySnapshot(w: World, s: Snapshot): void {
     p.aimX = aimX;
     p.aimY = aimY;
     p.kickHeld = held === 1;
+    p.buffs = { speed, power, control, aim };
+    p.teleports = teleports;
   }
   w.players = w.players.filter((p) => seen.has(p.id));
 }
