@@ -151,6 +151,15 @@ the host can **cancel** it outright, which ends it for everyone after one
 confirmation. Gartic offers **Start anyway** below its recommended player count,
 since two people still works — the chains are just shorter.
 
+- **Chess** — a full rules engine: castling with every condition, en passant,
+  promotion, check, checkmate, stalemate, the fifty-move rule, threefold
+  repetition, and algebraic notation with proper disambiguation. Play someone
+  else, or **play the computer** at three strengths. The engine is alpha-beta
+  over piece-square tables; the easier settings add a deliberate blunder rate,
+  because a weak engine that plays perfectly-but-shallowly is far less fun to
+  beat than one that occasionally hangs a piece. It always takes a mate when one
+  is there, at any strength. Games against the computer don't touch anyone's
+  rating, which also makes chess the first game you can open on your own.
 - **Tic-tac-toe** — moves are applied by a Postgres function, so a doctored
   board pushed from a browser console is rejected rather than believed. Play a
   best-of series or a **knockout tournament** for 3–8 players with a live
@@ -163,7 +172,9 @@ since two people still works — the chains are just shorter.
   same picture together, with autoplay. Drawings are stored as operation lists
   rather than PNGs: kilobytes instead of hundreds, replayable at any size, and
   it is what makes the paint bucket possible at all.
-- **Haxball** — top-down 2D football, host-authoritative. Players start in a
+- **Haxball** — top-down 2D football, host-authoritative. Players can stand
+  **in the goal**, which is what makes a keeper possible, so the mouth is wide,
+  the net is deep, and the ball is large enough to see. Players start in a
   lobby and pick Red, Blue or the bench; the host sets team size, pitch size,
   player speed, shot power, charge rate, ball drag, goal limit and match length,
   then starts the match. Shots are **charged** — hold the kick key to build
@@ -184,7 +195,8 @@ settles down, and a win is never worth exactly zero however lopsided the
 matchup. Gartic has no winner to speak of, so it pays **coins** and counts
 games rather than moving a rating.
 
-Coins buy cosmetics: **ball trails** that follow whoever last touched the ball,
+Coins buy cosmetics: **ball designs** and **ball trails** that follow whoever
+last touched the ball,
 **goal effects** that fire across the pitch when you score, and **celebrations**
 the pitch shouts afterwards. Everyone starts with the free defaults and 250
 coins. Shop cards animate a live preview, because a trail is only a trail once
@@ -224,7 +236,7 @@ src/
     status/       the board and the pure status engine
     schedule/     the weekly editor
     economy/      elo maths, cosmetics, shop and leaderboards
-    games/        lobby substrate, room hook + haxball / tictactoe / gartic
+    games/        lobby substrate, room hook + haxball / chess / tictactoe / gartic
     settings/     the settings modal
 api/gifs.ts           server-side Giphy proxy, so the key stays off clients
 supabase/schema.sql   the entire database, in one runnable file
@@ -242,13 +254,15 @@ glow behind the page.
 npm test
 ```
 
-127 tests covering the parts where bugs actually hide: the status engine's
+179 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
 configurable rounds, Haxball's collisions, goal maths, charged shots and match
-limits, Elo expectation/symmetry and the coin payouts, URL detection in
-messages, and two jsdom tests — one that mounts the whole app and walks through
+limits, Elo expectation/symmetry and the coin payouts, URL detection in messages, the
+whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
+stalemate, repetition) plus the bot only ever suggesting legal moves, and two
+jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 
