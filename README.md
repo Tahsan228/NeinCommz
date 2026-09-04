@@ -181,12 +181,34 @@ since two people still works — the chains are just shorter.
   power, with a dotted aim guide and a power meter — and a **best-of series**
   tracks match wins. The host runs a 60 Hz physics loop and broadcasts
   snapshots at 30 Hz over Supabase Realtime; everyone else sends key state.
+  Goals are shown again in slow motion the moment they go in — each client
+  records what it was already drawing, so a replay costs nothing on the wire.
 
   **Be realistic about this one.** It is a simplified take, not a clone, and
   every input takes a round trip through Supabase before it shows up. It is fine
   for messing about and it will not feel like the real Haxball. If the lag
   bothers you, the fix is to move the snapshot transport to WebRTC data channels
   and keep Supabase only for signalling.
+
+### Playing alone
+Chess and tic-tac-toe both ship an opponent, so either can be opened on your
+own. Tic-tac-toe is small enough to solve outright, so its hardest setting is
+literally perfect and cannot be beaten — the easier ones know the perfect move
+and decline to play it some of the time, which is a far better way to be
+beatable than playing at random.
+
+Haxball fills empty shirts with bots: up to four a side, at three skill levels.
+They chase only when they are the closest, hold position otherwise, aim where
+the ball is going rather than where it is, and never shoot towards their own
+net. They are there to make up the numbers, so they earn nobody anything and
+carry no rating.
+
+### The dashboard
+A small board above the status list: the time, local weather from Open-Meteo
+(no key, no account — location is asked for once and kept in your browser at
+neighbourhood precision), what you have on next, how many people are free right
+now, and how far it is to the weekend. Decline the location prompt and
+everything except the weather still works.
 
 ### Ratings, coins and the shop
 Every finished game is recorded. Competitive games (Haxball, tic-tac-toe) move
@@ -254,14 +276,15 @@ glow behind the page.
 npm test
 ```
 
-179 tests covering the parts where bugs actually hide: the status engine's
+196 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
 configurable rounds, Haxball's collisions, goal maths, charged shots and match
 limits, Elo expectation/symmetry and the coin payouts, URL detection in messages, the
 whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
-stalemate, repetition) plus the bot only ever suggesting legal moves, and two
+stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
+against itself; a Haxball bot must never kick towards its own goal), and two
 jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
