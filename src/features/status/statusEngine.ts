@@ -66,7 +66,10 @@ export function nextBlock(
  *   1. a manual override they set, until it expires
  *   2. presence, when they are away or fully offline
  *   3. whichever schedule block covers this minute
- *   4. nothing scheduled -> "Free"
+ *   4. nothing scheduled -> "Online"
+ *
+ * Only a block someone marked as a free period counts as free. An empty slot
+ * means the timetable says nothing, not that they are available.
  *
  * Presence deliberately sits above the schedule: a timetable saying "AP Bio"
  * is not useful information about someone whose browser has been shut for an
@@ -106,7 +109,7 @@ export function resolveStatus(
   }
 
   if (presence === 'offline') {
-    return { text: 'Offline', icon: 'circle', emoji: null, free: false, presence, next, source: 'presence' };
+    return { text: 'Offline', icon: 'phoneOff', emoji: null, free: false, presence, next, source: 'presence' };
   }
   if (presence === 'away') {
     return { text: 'Away', icon: 'moon', emoji: null, free: false, presence, next, source: 'presence' };
@@ -125,7 +128,11 @@ export function resolveStatus(
     };
   }
 
-  return { text: 'Free', icon: 'check', emoji: null, free: true, presence, next, source: 'idle' };
+  // Having nothing scheduled is not the same as being free. Somebody who
+  // never filled in a timetable would otherwise show as available around the
+  // clock, which is worse than saying nothing — so an empty slot reports only
+  // that they are here. `free` is reserved for a block they marked as free.
+  return { text: 'Online', icon: 'circle', emoji: null, free: false, presence, next, source: 'idle' };
 }
 
 /** Reject a block that would sit on top of one already on the same weekday. */

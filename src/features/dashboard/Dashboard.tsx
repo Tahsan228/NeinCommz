@@ -145,10 +145,14 @@ export function Dashboard() {
     .filter((b) => b.days.includes(weekday) && b.start_min > minute)
     .sort((a, b) => a.start_min - b.start_min)[0];
 
-  const freeNow = profiles.filter((p) => {
-    const s = resolveStatus(p, blocksFor(p.id), presenceOf(presence, p.id), now);
-    return s.free && s.presence !== 'offline';
-  });
+  // Two different questions, now that an empty timetable no longer counts as
+  // free: who is actually here, and who has said they have a free period.
+  const here = profiles.filter(
+    (p) => resolveStatus(p, blocksFor(p.id), presenceOf(presence, p.id), now).presence !== 'offline',
+  );
+  const freeNow = profiles.filter((p) =>
+    resolveStatus(p, blocksFor(p.id), presenceOf(presence, p.id), now).free,
+  );
 
   // Friday afternoon is a different feeling from Monday morning.
   const toWeekend = weekday === 0 || weekday === 6 ? 0 : 6 - weekday;
@@ -227,19 +231,24 @@ export function Dashboard() {
       </div>
 
       <div className="dash-card">
-        <div className="dash-label">Free right now</div>
-        {freeNow.length === 0 ? (
+        <div className="dash-label">Online now</div>
+        {here.length === 0 ? (
           <div className="dash-sub">Nobody, apparently.</div>
         ) : (
           <div className="dash-row" style={{ flexWrap: 'wrap', gap: 6 }}>
-            <b>{freeNow.length}</b>
+            <b>{here.length}</b>
             <span className="dash-sub" style={{ margin: 0 }}>
-              {freeNow
+              {here
                 .slice(0, 3)
                 .map((p) => p.display_name)
                 .join(', ')}
-              {freeNow.length > 3 && ` +${freeNow.length - 3}`}
+              {here.length > 3 && ` +${here.length - 3}`}
             </span>
+          </div>
+        )}
+        {freeNow.length > 0 && (
+          <div className="dash-sub" style={{ color: '#4fd695' }}>
+            {freeNow.length} on a free period
           </div>
         )}
         <div className="dash-sub">

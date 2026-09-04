@@ -80,10 +80,25 @@ describe('resolveStatus', () => {
     expect(s.free).toBe(true);
   });
 
-  it('falls back to Free outside every block', () => {
+  it('says Online, not Free, outside every block', () => {
+    // An empty slot means the timetable says nothing — not that they are
+    // available. Only a block marked as free counts as free.
     const s = resolveStatus(noOverride, schedule, 'online', wed(16, 0));
-    expect(s.text).toBe('Free');
+    expect(s.text).toBe('Online');
+    expect(s.free).toBe(false);
     expect(s.source).toBe('idle');
+  });
+
+  it('reserves free for a block someone actually marked free', () => {
+    expect(resolveStatus(noOverride, schedule, 'online', wed(9, 10)).free).toBe(true);
+    expect(resolveStatus(noOverride, schedule, 'online', wed(8, 20)).free).toBe(false);
+    expect(resolveStatus(noOverride, schedule, 'online', wed(16, 0)).free).toBe(false);
+  });
+
+  it('never calls someone with no timetable at all free', () => {
+    const s = resolveStatus(noOverride, [], 'online', wed(11, 0));
+    expect(s.text).toBe('Online');
+    expect(s.free).toBe(false);
   });
 
   it('tells you what is coming up next', () => {
@@ -137,9 +152,11 @@ describe('resolveStatus', () => {
     expect(s.text).toBe('Phone taken');
   });
 
-  it('says Free on a weekend, when no block runs', () => {
+  it('says Online on a weekend, when no block runs', () => {
     const sat = new Date(2026, 8, 5, 9, 10);
-    expect(resolveStatus(noOverride, schedule, 'online', sat).text).toBe('Free');
+    const s = resolveStatus(noOverride, schedule, 'online', sat);
+    expect(s.text).toBe('Online');
+    expect(s.free).toBe(false);
   });
 });
 

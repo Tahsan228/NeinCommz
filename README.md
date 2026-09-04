@@ -139,7 +139,12 @@ repeat. The board resolves what everyone is doing right now, in this order:
 1. a manual override ("at practice") until it expires,
 2. away / offline, from live presence,
 3. whichever schedule block covers this minute,
-4. otherwise, free.
+4. otherwise, just **Online**.
+
+Having nothing scheduled is deliberately **not** the same as being free. Only a
+block someone marked as a free period reads as free and shows green — otherwise
+anyone who never filled in a timetable would appear available around the clock,
+which is worse than saying nothing at all.
 
 Presence deliberately outranks the timetable: a schedule saying *AP Bio* tells
 you nothing useful about someone whose browser has been shut for an hour. Each
@@ -284,7 +289,7 @@ glow behind the page.
 npm test
 ```
 
-213 tests covering the parts where bugs actually hide: the status engine's
+215 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
