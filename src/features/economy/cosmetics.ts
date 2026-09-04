@@ -99,6 +99,77 @@ const TRAILS: Record<string, TrailPainter> = {
     });
   },
 
+  trail_bubbles: (ctx, pts, accent, tick) => {
+    pts.forEach((p, i) => {
+      const size = 4 + p.age * 7 + Math.sin((tick + i * 11) / 9) * 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+      ctx.strokeStyle = withAlpha(accent, 0.5 * p.age);
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      // A highlight, which is most of what makes a circle read as a bubble.
+      ctx.beginPath();
+      ctx.arc(p.x - size * 0.3, p.y - size * 0.3, size * 0.22, 0, Math.PI * 2);
+      ctx.fillStyle = withAlpha('#ffffff', 0.55 * p.age);
+      ctx.fill();
+    });
+  },
+
+  trail_lightning: (ctx, pts, _accent, tick) => {
+    // Forked arcs between consecutive positions, rebuilt every frame so it
+    // crackles instead of sitting still.
+    ctx.lineCap = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      for (let k = 1; k < 3; k++) {
+        const t = k / 3;
+        const jitter = Math.sin(tick * 0.7 + i * 3 + k) * 5;
+        ctx.lineTo(a.x + (b.x - a.x) * t + jitter, a.y + (b.y - a.y) * t - jitter);
+      }
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = withAlpha(i % 2 === 0 ? '#ffffff' : '#9fd8ff', 0.75 * b.age);
+      ctx.lineWidth = 2.4 * b.age;
+      ctx.stroke();
+    }
+  },
+
+  trail_petals: (ctx, pts, accent, tick) => {
+    pts.forEach((p, i) => {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(tick / 14 + i);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 7 * p.age, 3.4 * p.age, 0, 0, Math.PI * 2);
+      ctx.fillStyle = withAlpha(i % 2 ? '#ffb7d5' : accent, 0.6 * p.age);
+      ctx.fill();
+      ctx.restore();
+    });
+  },
+
+  trail_void: (ctx, pts) => {
+    // Punches a hole in whatever was drawn underneath, then edges it in light.
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11 * p.age, 0, Math.PI * 2);
+      ctx.fillStyle = withAlpha('#000000', 0.9 * p.age);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11 * p.age, 0, Math.PI * 2);
+      ctx.strokeStyle = withAlpha('#be96ff', 0.5 * p.age);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+  },
+
   trail_starfield: (ctx, pts, _accent, tick) => {
     pts.forEach((p, i) => {
       const r = 7 * p.age;
@@ -229,6 +300,92 @@ const EFFECTS: Record<string, FxPainter> = {
     ctx.fillRect(0, 0, w, h);
   },
 
+  fx_earthquake: (ctx, w, h, t) => {
+    // Cracks spreading from the centre and widening as they go.
+    const spread = Math.sin(t * Math.PI);
+    ctx.strokeStyle = withAlpha('#14100c', 0.75 * spread);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + rand(i);
+      ctx.beginPath();
+      ctx.moveTo(w / 2, h / 2);
+      let x = w / 2;
+      let y = h / 2;
+      for (let k = 1; k <= 5; k++) {
+        x += Math.cos(a + (rand(i * 5 + k) - 0.5)) * (t * 60);
+        y += Math.sin(a + (rand(i * 5 + k) - 0.5)) * (t * 60);
+        ctx.lineTo(x, y);
+      }
+      ctx.lineWidth = 5 * (1 - t) + 1;
+      ctx.stroke();
+    }
+  },
+
+  fx_meteor: (ctx, w, h, t) => {
+    const fall = Math.min(1, t / 0.45);
+    const x = w * 0.5;
+    const y = h * 0.5;
+
+    if (fall < 1) {
+      const fx = x - 260 * (1 - fall);
+      const fy = y - 300 * (1 - fall);
+      ctx.beginPath();
+      ctx.moveTo(fx - 40, fy - 46);
+      ctx.lineTo(fx, fy);
+      ctx.strokeStyle = withAlpha('#ffb450', 0.85);
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(fx, fy, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd08a';
+      ctx.fill();
+    } else {
+      const boom = (t - 0.45) / 0.55;
+      ctx.beginPath();
+      ctx.arc(x, y, boom * w * 0.55, 0, Math.PI * 2);
+      ctx.strokeStyle = withAlpha('#ff963c', 1 - boom);
+      ctx.lineWidth = 14 * (1 - boom);
+      ctx.stroke();
+    }
+  },
+
+  fx_snowstorm: (ctx, w, h, t) => {
+    const veil = Math.sin(t * Math.PI);
+    ctx.fillStyle = withAlpha('#ffffff', 0.35 * veil);
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 150; i++) {
+      const x = (rand(i) * w + t * 220) % w;
+      const y = (rand(i + 40) * h + t * 420) % h;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5 + rand(i + 9) * 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = withAlpha('#ffffff', 0.9 * veil);
+      ctx.fill();
+    }
+  },
+
+  fx_supernova: (ctx, w, h, t) => {
+    // Builds to a whiteout, then falls away again.
+    const flash = t < 0.35 ? t / 0.35 : Math.max(0, 1 - (t - 0.35) / 0.65);
+    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.75);
+    g.addColorStop(0, withAlpha('#ffffff', flash));
+    g.addColorStop(0.35, withAlpha('#ffdc96', flash * 0.8));
+    g.addColorStop(1, withAlpha('#ffb450', 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * Math.PI * 2;
+      const r = t * w * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(w / 2 + Math.cos(a) * r * 0.7, h / 2 + Math.sin(a) * r * 0.7);
+      ctx.lineTo(w / 2 + Math.cos(a) * r, h / 2 + Math.sin(a) * r);
+      ctx.strokeStyle = withAlpha('#fff0c8', (1 - t) * 0.8);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  },
+
   fx_aurora: (ctx, w, h, t) => {
     for (let band = 0; band < 4; band++) {
       ctx.beginPath();
@@ -270,6 +427,11 @@ export const CELEBRATIONS: Record<string, string> = {
   cel_worldclass: 'WORLD CLASS',
   cel_siuu: 'SIUUU',
   cel_goat: 'SIMPLY THE GOAT',
+  cel_ratio: 'RATIO',
+  cel_calculated: 'CALCULATED',
+  cel_nomistakes: 'NO MISTAKES',
+  cel_getgood: 'GET GOOD',
+  cel_thanks: 'THANKS, KEEPER',
 };
 
 export function celebrationText(id: string | undefined): string {
@@ -381,6 +543,76 @@ const BALLS: Record<string, BallPainter> = {
     g.addColorStop(1, withAlpha(accent, 0.25 + pulse * 0.4));
     ctx.fillStyle = g;
     ctx.fillRect(-r, -r, r * 2, r * 2);
+  },
+
+  ball_cube: (ctx, r, _a, tick) => {
+    ctx.fillStyle = '#e8e8ee';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.save();
+    ctx.rotate(tick / 22);
+    ctx.fillStyle = '#3a3a46';
+    ctx.fillRect(-r * 0.55, -r * 0.55, r * 1.1, r * 1.1);
+    ctx.strokeStyle = '#8d8d99';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-r * 0.55, -r * 0.55, r * 1.1, r * 1.1);
+    ctx.restore();
+  },
+
+  ball_smiley: (ctx, r) => {
+    ctx.fillStyle = '#f5d442';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.fillStyle = '#3a2c05';
+    ctx.beginPath();
+    ctx.arc(-r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+    ctx.arc(r * 0.32, -r * 0.2, r * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, r * 0.05, r * 0.5, 0.25 * Math.PI, 0.75 * Math.PI);
+    ctx.strokeStyle = '#3a2c05';
+    ctx.lineWidth = r * 0.15;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  },
+
+  ball_planet: (ctx, r, _a, tick) => {
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, '#c98a4b');
+    g.addColorStop(0.5, '#e0b784');
+    g.addColorStop(1, '#a86b38');
+    ctx.fillStyle = g;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+
+    ctx.strokeStyle = withAlpha('#78461e', 0.5);
+    ctx.lineWidth = r * 0.13;
+    for (const y of [-0.45, -0.1, 0.28, 0.6]) {
+      ctx.beginPath();
+      ctx.moveTo(-r, y * r);
+      ctx.lineTo(r, y * r);
+      ctx.stroke();
+    }
+
+    // The ring sits outside the clip, so only its near half shows.
+    ctx.save();
+    ctx.rotate(-0.35 + Math.sin(tick / 60) * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 1.35, r * 0.3, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = withAlpha('#fff0d2', 0.85);
+    ctx.lineWidth = r * 0.14;
+    ctx.stroke();
+    ctx.restore();
+  },
+
+  ball_moon: (ctx, r) => {
+    ctx.fillStyle = '#b9b9c2';
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    for (let i = 0; i < 7; i++) {
+      const a = rand(i) * Math.PI * 2;
+      const d = rand(i + 3) * r * 0.7;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * (0.1 + rand(i + 6) * 0.16), 0, Math.PI * 2);
+      ctx.fillStyle = '#9a9aa6';
+      ctx.fill();
+    }
   },
 
   ball_pixel: (ctx, r) => {

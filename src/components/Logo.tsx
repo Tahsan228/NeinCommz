@@ -12,34 +12,28 @@ export function LogoMark({ size = 28 }: { size?: number }) {
     <span className="logo-mark" style={{ width: size, height: size }}>
       <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden focusable="false">
         <defs>
-          <linearGradient id="nc-facet" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.45)" />
-            <stop offset="55%" stopColor="rgba(255,255,255,0.08)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0.22)" />
+          <linearGradient id="nc-edge" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent-hi, #f4796c)" />
+            <stop offset="100%" stopColor="var(--accent, #e0574f)" />
           </linearGradient>
         </defs>
 
-        {/* The crystal: a hexagon, slightly tall, with facet lines. */}
-        <path d="M16 2.6 27.2 9v14L16 29.4 4.8 23V9z" fill="url(#nc-facet)" />
+        {/* An upright hexagon, flat-topped and symmetrical about both axes,
+            so it reads as a shape rather than as something tipped over. */}
         <path
-          d="M16 2.6 27.2 9v14L16 29.4 4.8 23V9z"
+          d="M16 2.8 27 9.4v13.2L16 29.2 5 22.6V9.4z"
           fill="none"
-          stroke="rgba(255,255,255,0.5)"
-          strokeWidth="1.1"
+          stroke="url(#nc-edge)"
+          strokeWidth="2.4"
           strokeLinejoin="round"
         />
-        <path
-          d="M16 2.6v26.8M4.8 9l22.4 14M27.2 9 4.8 23"
-          stroke="rgba(255,255,255,0.16)"
-          strokeWidth="0.9"
-        />
 
-        {/* The N, sitting proud of the facets. */}
+        {/* The N, centred inside it with even margins. */}
         <path
-          d="M11.6 21.4V10.6l8.8 10.8V10.6"
+          d="M12 21V11l8 10V11"
           fill="none"
-          stroke="#fff"
-          strokeWidth="2.6"
+          stroke="url(#nc-edge)"
+          strokeWidth="2.8"
           strokeLinecap="round"
           strokeLinejoin="round"
         />

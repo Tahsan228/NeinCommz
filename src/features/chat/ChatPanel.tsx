@@ -88,6 +88,7 @@ export function ChatPanel({
   const [results, setResults] = useState<Message[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [hit, setHit] = useState<string | null>(null);
+  const [readers, setReaders] = useState<Map<UUID, string>>(new Map());
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -259,6 +260,73 @@ export function ChatPanel({
     lastTypingSent.current = now;
     void typingChannel.current?.send({ type: 'broadcast', event: 'typing', payload: { id: me } });
   }, [me]);
+
+  /* ------------------------------------------------------ read receipts -- */
+  useEffect(() => {
+    if (!me) return;
+
+    const load = async () => {
+      const { data } = await supabase
+        .from('read_state')
+        .select('profile_id, last_read_at')
+        .eq('room_id', roomId);
+      setReaders(
+        new Map(
+          ((data as { profile_id: UUID; last_read_at: string }[]) ?? []).map((r) => [
+            r.profile_id,
+            r.last_read_at,
+          ]),
+        ),
+      );
+    };
+    void load();
+
+    const ch = supabase
+      .channel(`reads:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'read_state', filter: `room_id=eq.${roomId}` },
+        () => void load(),
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(ch);
+    };
+  }, [me, roomId]);
+
+  // Mark the room read whenever the newest message is actually on screen.
+  // Doing it on every render would claim you had read things scrolled far
+  // above, which is exactly the lie a read receipt must not tell.
+  const newestAt = messages.length ? messages[messages.length - 1].created_at : null;
+
+  /** My latest message, which is the only one worth hanging a receipt on. */
+  const myLastId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].author_id === me && !messages[i].pending) return messages[i].id;
+    }
+    return null;
+  }, [messages, me]);
+
+  /** Who had caught up as of that message. */
+  const seenBy = useMemo(() => {
+    const target = messages.find((m) => m.id === myLastId);
+    if (!target) return [];
+    const at = new Date(target.created_at).getTime();
+    return [...readers.entries()]
+      .filter(([id, when]) => id !== me && new Date(when).getTime() >= at)
+      .map(([id]) => byId.get(id)?.display_name ?? 'Someone')
+      .sort();
+  }, [messages, myLastId, readers, me, byId]);
+  useEffect(() => {
+    if (!me || !newestAt || searchOpen || !pinnedRef.current || document.hidden) return;
+    void supabase
+      .from('read_state')
+      .upsert(
+        { room_id: roomId, profile_id: me, last_read_at: new Date().toISOString() },
+        { onConflict: 'room_id,profile_id' },
+      );
+  }, [me, roomId, newestAt, searchOpen]);
 
   /* -------------------------------------------------------------- search -- */
   // Searched server-side so it reaches the whole history, not just the page
@@ -696,6 +764,17 @@ export function ChatPanel({
                           {list.length > 1 && <span>{list.length}</span>}
                         </button>
                       ))}
+                    </div>
+                  )}
+
+                  {m.id === myLastId && seenBy.length > 0 && (
+                    <div className="seen" title={seenBy.join(', ')}>
+                      <Icon name="check" size={11} />
+                      {seenBy.length === 1
+                        ? `Seen by ${seenBy[0]}`
+                        : seenBy.length <= 3
+                          ? `Seen by ${seenBy.slice(0, -1).join(', ')} and ${seenBy[seenBy.length - 1]}`
+                          : `Seen by ${seenBy.length} people`}
                     </div>
                   )}
 

@@ -212,6 +212,33 @@ export function TicTacToeGame({
     };
   }, [state.bot, state.turn, state.winner, state.board, state.x, session.status, applyLocally]);
 
+  /* -------------------------------------------------------------- award -- */
+  // Report as soon as a game ends, not when somebody clicks past it — the
+  // last game of a series is exactly the one nobody clicks past.
+  const awardedRound = useRef(-1);
+
+  useEffect(() => {
+    if (!isHost || !state.winner || state.bot) return;
+    if (!state.x || !state.o) return;
+    if (awardedRound.current === state.game) return;
+    awardedRound.current = state.game;
+
+    const loserId = winnerId === state.x ? state.o : state.x;
+    void award(
+      session.id,
+      winnerId
+        ? [
+            { profile_id: winnerId, outcome: 'win', score: 1 },
+            { profile_id: loserId, outcome: 'loss', score: 0 },
+          ]
+        : [
+            { profile_id: state.x, outcome: 'draw', score: 0 },
+            { profile_id: state.o, outcome: 'draw', score: 0 },
+          ],
+      state.game,
+    );
+  }, [isHost, state.winner, state.bot, state.x, state.o, state.game, winnerId, session.id, award]);
+
   /* ------------------------------------------------------------ advance -- */
   const nextGame = async () => {
     if (!state.winner || advancedGame.current === state.game) return;
@@ -221,25 +248,6 @@ export function TicTacToeGame({
     let draws = state.draws;
     if (state.winner === 'draw') draws++;
     else if (winnerId) wins[winnerId] = (wins[winnerId] ?? 0) + 1;
-
-    // Rate the game that just finished. Only the host reports it, and the
-    // database ignores a repeat for the same session anyway. Games against
-    // the computer are practice and do not count.
-    if (isHost && !state.bot && state.x && state.o) {
-      const loserId = winnerId === state.x ? state.o : state.x;
-      void award(
-        session.id,
-        winnerId
-          ? [
-              { profile_id: winnerId, outcome: 'win', score: 1 },
-              { profile_id: loserId, outcome: 'loss', score: 0 },
-            ]
-          : [
-              { profile_id: state.x, outcome: 'draw', score: 0 },
-              { profile_id: state.o, outcome: 'draw', score: 0 },
-            ],
-      );
-    }
 
     if (state.mode === 'knockout' && state.bracket) {
       // A draw is replayed rather than resolved, so nobody goes out on one.

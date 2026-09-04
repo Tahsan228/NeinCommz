@@ -3,6 +3,7 @@ import { uploadImage } from '../../lib/supabase';
 import { CHAT_SHRINK, shrinkImage } from '../../lib/image';
 import { useSession } from '../../state/session';
 import { Icon } from '../../components/Icon';
+import { useSecret } from '../../state/secret';
 import { GifPicker, type GifPick } from './GifPicker';
 
 export interface OutgoingMessage {
@@ -30,6 +31,7 @@ export function Composer({
   onCancelReply: () => void;
 }) {
   const { prefs, profile } = useSession();
+  const { enterComposer } = useSecret();
   const [text, setText] = useState('');
   const [attach, setAttach] = useState<Attachment | null>(null);
   const [gifOpen, setGifOpen] = useState(false);
@@ -209,6 +211,7 @@ export function Composer({
             onTyping();
           }}
           onKeyDown={onKeyDown}
+          onFocus={enterComposer}
           onPaste={(e) => {
             const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'));
             const f = item?.getAsFile();

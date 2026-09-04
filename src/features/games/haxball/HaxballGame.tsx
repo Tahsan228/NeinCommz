@@ -15,6 +15,7 @@ import {
 } from '../../economy/cosmetics';
 import {
   BALL_R,
+  CELEBRATION_TICKS,
   DEFAULT_RULES,
   NO_INPUT,
   PITCH_PRESETS,
@@ -312,6 +313,7 @@ export function HaxballGame({
                 : ('loss' as const),
           score: p.team === 0 ? w.score.red : w.score.blue,
         })),
+        state.series.match,
       );
     }, 400);
     return () => window.clearInterval(id);
@@ -352,6 +354,8 @@ export function HaxballGame({
 
       // Freeze the tape the instant a goal goes in.
       if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 30) {
+        // About four seconds of build-up: long enough to show the move that
+        // led to the goal, short enough that the replay is not a highlight reel.
         clipRef.current = tapeRef.current.slice(-240);
       } else if (w.celebrating === 0) {
         clipRef.current = [];
@@ -375,36 +379,30 @@ export function HaxballGame({
         celebrateFromRef.current = 0;
       }
 
-      // While the goal is being celebrated, show it again in slow motion.
-      // The clip is stretched to exactly fill the celebration, so it always
-      // ends the moment play restarts.
-      const clip = clipRef.current;
-      const replayWorld = replayWorldRef.current;
-
-      if (w.celebrating > 0 && clip.length > 1 && replayWorld) {
-        const total = celebrateFromRef.current || 1;
-        const progress = 1 - w.celebrating / total;
-        const frame = Math.min(clip.length - 1, Math.floor(progress * (clip.length - 1)));
-
-        applySnapshot(replayWorld, clip[frame]);
-        replayWorld.celebrating = 0;
-        replayWorld.countdown = 0;
-
-        drawPitch(ctx, replayWorld, me, profiles, {
-          trail: [],
-          equippedOf,
-          celebrateTotal: 0,
-        });
-
-        drawReplayBadge(ctx, w.pitch.w, progress);
-        return;
-      }
-
-      drawPitch(ctx, w, me, profiles, {
+      const cosmetics = {
         trail: trailRef.current,
         equippedOf,
         celebrateTotal: celebrateFromRef.current,
-      });
+      };
+
+      // A goal is a short film rather than a banner: hold on the scorer, run
+      // the replay, then fade out into the restart.
+      if (w.celebrating > 0) {
+        drawGoalSequence(ctx, w, me, profiles, cosmetics, {
+          clip: clipRef.current,
+          replayWorld: replayWorldRef.current,
+          total: celebrateFromRef.current || CELEBRATION_TICKS,
+        });
+        return;
+      }
+
+      drawPitch(ctx, w, me, profiles, cosmetics);
+
+      // Play restarts behind its own countdown, so dim the pitch under it.
+      if (w.countdown > 0) {
+        ctx.fillStyle = 'rgba(6, 8, 12, 0.35)';
+        ctx.fillRect(0, 0, w.pitch.w, w.pitch.h);
+      }
     };
 
     raf = requestAnimationFrame(draw);
@@ -1168,6 +1166,233 @@ function drawPitch(
       ctx.fillText(scorer.display_name, midX, midY + 64);
     }
   }
+}
+
+/* ======================================================= goal sequence ==== */
+
+const MOMENT_END = 0.3;
+const REPLAY_END = 0.86;
+
+interface Tape {
+  clip: Snapshot[];
+  replayWorld: World | null;
+  total: number;
+}
+
+/** Whoever this is, said the way a commentator would. */
+function nameFor(id: string | null, profiles: Map<UUID, Profile>): string {
+  if (!id) return 'Somebody';
+  if (isBot(id)) return botName(id);
+  return profiles.get(id)?.display_name ?? 'Somebody';
+}
+
+function easeOut(t: number): number {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+}
+
+/**
+ * Where in the clip to be at this point of the replay.
+ *
+ * Deliberately not linear: it runs at normal speed up to the shot, crawls
+ * through the strike itself, then releases. A replay that plays the whole
+ * thing at one speed shows you everything except the bit you wanted to see.
+ */
+function replayFrame(progress: number, length: number, shotIndex: number): number {
+  const last = length - 1;
+  if (last <= 0) return 0;
+
+  const slowFrom = Math.max(0, shotIndex - 22);
+  const slowTo = Math.min(last, shotIndex + 16);
+
+  if (progress < 0.5) {
+    return (progress / 0.5) * slowFrom;
+  }
+  if (progress < 0.82) {
+    // A third of the timeline spent on well under a second of play.
+    return slowFrom + ((progress - 0.5) / 0.32) * (slowTo - slowFrom);
+  }
+  return slowTo + ((progress - 0.82) / 0.18) * (last - slowTo);
+}
+
+/** Run `draw` with the camera pushed in on a point. */
+function withCamera(
+  ctx: CanvasRenderingContext2D,
+  w: World,
+  focus: { x: number; y: number } | null,
+  zoom: number,
+  draw: () => void,
+): void {
+  ctx.save();
+  if (focus && zoom > 1.001) {
+    ctx.translate(w.pitch.w / 2, w.pitch.h / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-focus.x, -focus.y);
+  }
+  draw();
+  ctx.restore();
+}
+
+/** The bars that say "stop playing and watch this". */
+function letterbox(ctx: CanvasRenderingContext2D, w: World, amount: number): void {
+  const bar = w.pitch.h * 0.12 * easeOut(amount);
+  if (bar <= 0.5) return;
+  ctx.fillStyle = '#05060a';
+  ctx.fillRect(0, 0, w.pitch.w, bar);
+  ctx.fillRect(0, w.pitch.h - bar, w.pitch.w, bar);
+}
+
+function drawGoalSequence(
+  ctx: CanvasRenderingContext2D,
+  w: World,
+  me: UUID,
+  profiles: Map<UUID, Profile>,
+  cosmetics: Cosmetics,
+  tape: Tape,
+): void {
+  const p = w.pitch;
+  const t = 1 - w.celebrating / tape.total;
+  const goal = w.goal;
+
+  ctx.fillStyle = '#05060a';
+  ctx.fillRect(0, 0, p.w, p.h);
+
+  const scorerId = goal?.scorer ?? w.lastTouch;
+  const scorer = w.players.find((q) => q.id === scorerId);
+  const focus = scorer ?? (goal ? { x: goal.x, y: goal.y } : null);
+
+  /* ------------------------------------------------ 1. hold on the scorer */
+  if (t < MOMENT_END) {
+    const local = t / MOMENT_END;
+    // Push in over the first second or so, then simply stay there.
+    const zoom = 1 + 1.15 * easeOut(local / 0.45);
+
+    withCamera(ctx, w, focus, zoom, () => {
+      drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
+
+      // A ring around whoever did it, so the eye lands on them immediately.
+      if (scorer) {
+        const pulse = 1 + Math.sin(local * 14) * 0.08;
+        ctx.beginPath();
+        ctx.arc(scorer.x, scorer.y, (PLAYER_R + 12) * pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = TEAM_COLOR[scorer.team];
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+      }
+    });
+
+    // The goal effect plays over the top, in screen space, so a zoomed camera
+    // does not throw confetti off the edges.
+    if (goal && scorerId) {
+      paintGoalEffect(
+        cosmetics.equippedOf(scorerId).goalfx,
+        ctx,
+        p.w,
+        p.h,
+        Math.min(1, local / 0.8),
+        (profiles.get(scorerId)?.accent_color ?? TEAM_COLOR[goal.team]),
+      );
+    }
+
+    letterbox(ctx, w, local / 0.35);
+
+    // Titles slide up from under the lower bar.
+    const rise = easeOut((local - 0.15) / 0.35);
+    if (rise > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, rise);
+      ctx.textAlign = 'center';
+
+      ctx.font = '800 40px system-ui, sans-serif';
+      ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
+      ctx.fillText('GOAL', p.w / 2, p.h * 0.44 + (1 - rise) * 24);
+
+      ctx.font = '700 26px system-ui, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      const who = nameFor(scorerId, profiles);
+      ctx.fillText(
+        goal?.ownGoal ? `${who} — own goal` : `${who} scored`,
+        p.w / 2,
+        p.h * 0.53 + (1 - rise) * 24,
+      );
+
+      const shout = scorerId ? celebrationText(cosmetics.equippedOf(scorerId).celebration) : '';
+      if (shout && !goal?.ownGoal) {
+        ctx.font = '700 19px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.fillText(shout, p.w / 2, p.h * 0.6 + (1 - rise) * 24);
+      }
+      ctx.restore();
+    }
+    return;
+  }
+
+  /* -------------------------------------------------------- 2. the replay */
+  if (t < REPLAY_END && tape.clip.length > 1 && tape.replayWorld) {
+    const local = (t - MOMENT_END) / (REPLAY_END - MOMENT_END);
+    const clip = tape.clip;
+
+    // Where in the clip the shot itself happened.
+    let shotIndex = clip.length - 1;
+    if (goal) {
+      const found = clip.findIndex((f) => f.t >= goal.shotTick);
+      if (found >= 0) shotIndex = found;
+    }
+
+    const frame = Math.round(replayFrame(local, clip.length, shotIndex));
+    const rw = tape.replayWorld;
+    applySnapshot(rw, clip[Math.min(clip.length - 1, Math.max(0, frame))]);
+    rw.celebrating = 0;
+    rw.countdown = 0;
+    rw.goal = null;
+
+    drawPitch(ctx, rw, me, profiles, { trail: [], equippedOf: cosmetics.equippedOf, celebrateTotal: 0 });
+
+    letterbox(ctx, w, 1);
+    drawReplayBadge(ctx, p.w, local);
+
+    // Who did it, along the bottom bar where a broadcast would put it.
+    ctx.save();
+    ctx.textAlign = 'left';
+    const barY = p.h - p.h * 0.12 * 0.5 + 5;
+
+    ctx.font = '700 15px system-ui, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(nameFor(scorerId, profiles), 18, barY);
+
+    if (goal?.assist) {
+      ctx.font = '600 13px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18 + ctx.measureText('').width + 150, barY);
+    }
+
+    ctx.textAlign = 'right';
+    ctx.font = '700 15px system-ui, sans-serif';
+    ctx.fillStyle = TEAM_COLOR[0];
+    ctx.fillText(String(w.score.red), p.w - 44, barY);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText('–', p.w - 30, barY);
+    ctx.fillStyle = TEAM_COLOR[1];
+    ctx.fillText(String(w.score.blue), p.w - 16, barY);
+    ctx.restore();
+
+    // The slow section gets a marker, so the crawl reads as deliberate.
+    if (local > 0.5 && local < 0.82) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '700 12px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillText('SLOW MOTION', p.w / 2, p.h * 0.12 * 0.5 + 4);
+      ctx.restore();
+    }
+    return;
+  }
+
+  /* ---------------------------------------------------- 3. fade to restart */
+  const local = (t - REPLAY_END) / (1 - REPLAY_END);
+  drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
+  ctx.fillStyle = `rgba(5, 6, 10, ${0.25 + 0.35 * easeOut(local)})`;
+  ctx.fillRect(0, 0, p.w, p.h);
+  letterbox(ctx, w, 1 - local);
 }
 
 /** The corner marker and progress bar that say "this is not live". */

@@ -8,6 +8,7 @@ import { ToastHost } from './state/toasts';
 import { Avatar, Panel, Spinner } from './components/ui';
 import { Icon } from './components/Icon';
 import { Logo } from './components/Logo';
+import { useSecret } from './state/secret';
 import { SiteGate } from './features/gate/SiteGate';
 import {
   CreateProfile,
@@ -74,6 +75,7 @@ export default function App() {
 function Home() {
   const { profile, prefs } = useSession();
   const { online } = useDirectory();
+  const { tapLogo, armed } = useSecret();
   const [settings, setSettings] = useState(false);
   const [shop, setShop] = useState(false);
   const [boards, setBoards] = useState(false);
@@ -93,7 +95,9 @@ function Home() {
       {!online && <div className="banner">Reconnecting… messages you send will queue up.</div>}
 
       <div className="topbar">
-        <Logo size={26} />
+        <button className="logo-btn" onClick={tapLogo} data-armed={armed} aria-label="NeinCommz">
+          <Logo size={26} />
+        </button>
         <div className="topbar-spacer" />
         <div className="clock">{formatClock(now, prefs.clock24, prefs.showSeconds)}</div>
 

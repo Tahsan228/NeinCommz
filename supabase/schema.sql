@@ -877,3 +877,194 @@ begin
     end if;
   end loop;
 end $pub$;
+
+
+-- ======================================================== round 6 fixes ====
+
+-- A session hosts a whole series, a bracket or a best-of -- not one game. The
+-- old unique (session_id, profile_id) therefore paid out the FIRST game of a
+-- session and silently discarded every game after it, which is why
+-- leaderboards stayed at zero however much anyone played.
+alter table match_results add column if not exists round int not null default 1;
+
+do $fix$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conname = 'match_results_session_id_profile_id_key'
+  ) then
+    alter table match_results drop constraint match_results_session_id_profile_id_key;
+  end if;
+end $fix$;
+
+create unique index if not exists match_results_once_per_round
+  on match_results (session_id, profile_id, round);
+
+-- Same signature plus the round, so an in-flight client cannot accidentally
+-- call the old one and have every game collapse onto round 1 again.
+drop function if exists award_match(uuid, jsonb);
+
+create or replace function award_match(p_session uuid, p_outcomes jsonb, p_round int default 1)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  s          game_sessions%rowtype;
+  rated      boolean;
+  entry      jsonb;
+  pid        uuid;
+  outcome    text;
+  score      int;
+  cur_elo    int;
+  cur_played int;
+  opp_elo    numeric;
+  delta      int;
+  coins_won  int;
+  results    jsonb := '[]'::jsonb;
+begin
+  select * into s from game_sessions where id = p_session;
+  if not found then raise exception 'no such session'; end if;
+
+  -- This round already paid out, so this is a duplicate report.
+  if exists (
+    select 1 from match_results
+    where session_id = p_session and round = p_round
+  ) then
+    return '[]'::jsonb;
+  end if;
+
+  rated := s.game in ('tictactoe', 'haxball', 'chess');
+
+  for entry in select * from jsonb_array_elements(p_outcomes)
+  loop
+    pid     := (entry->>'profile_id')::uuid;
+    outcome := coalesce(entry->>'outcome', 'draw');
+    score   := coalesce((entry->>'score')::int, 0);
+
+    if outcome not in ('win', 'loss', 'draw') then
+      raise exception 'bad outcome %', outcome;
+    end if;
+
+    insert into game_stats (profile_id, game) values (pid, s.game)
+    on conflict (profile_id, game) do nothing;
+
+    select elo, played into cur_elo, cur_played
+      from game_stats where profile_id = pid and game = s.game;
+
+    select coalesce(avg(gs.elo), cur_elo) into opp_elo
+      from jsonb_array_elements(p_outcomes) o
+      join game_stats gs
+        on gs.profile_id = (o->>'profile_id')::uuid and gs.game = s.game
+     where (o->>'profile_id')::uuid <> pid;
+
+    delta := case when rated then elo_delta(cur_elo, round(opp_elo)::int, outcome, cur_played)
+                  else 0 end;
+
+    coins_won := case outcome when 'win' then 60 when 'draw' then 30 else 15 end
+                 + greatest(score, 0) * 10;
+
+    insert into match_results
+      (session_id, profile_id, game, outcome, elo_before, elo_after, elo_delta,
+       coins, score, round)
+    values
+      (p_session, pid, s.game, outcome, cur_elo, greatest(100, cur_elo + delta), delta,
+       coins_won, score, p_round);
+
+    update game_stats set
+      elo         = greatest(100, elo + delta),
+      played      = played + 1,
+      won         = won   + case when outcome = 'win'  then 1 else 0 end,
+      lost        = lost  + case when outcome = 'loss' then 1 else 0 end,
+      drawn       = drawn + case when outcome = 'draw' then 1 else 0 end,
+      score_for   = score_for + greatest(score, 0),
+      streak      = case when outcome = 'win' then streak + 1 else 0 end,
+      best_streak = greatest(best_streak,
+                             case when outcome = 'win' then streak + 1 else 0 end),
+      updated_at  = now()
+    where profile_id = pid and game = s.game;
+
+    update profiles set coins = coins + coins_won where id = pid;
+
+    results := results || jsonb_build_object(
+      'profile_id', pid, 'elo_delta', delta, 'coins', coins_won);
+  end loop;
+
+  return results;
+end $fn$;
+
+grant execute on function award_match(uuid, jsonb, int) to authenticated;
+
+-- ------------------------------------------------------------ read receipts
+-- read_state already existed but nothing wrote to it. Anyone in the room may
+-- see who has caught up; you may only move your own marker.
+drop policy if exists read_state_read on read_state;
+create policy read_state_read on read_state for select to authenticated
+  using (is_room_member(room_id));
+
+drop policy if exists read_state_write on read_state;
+create policy read_state_write on read_state for all to authenticated
+  using (profile_id = auth.uid()) with check (profile_id = auth.uid());
+
+do $pub$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'read_state'
+  ) then
+    alter publication supabase_realtime add table public.read_state;
+  end if;
+end $pub$;
+
+-- --------------------------------------------------------------- the secret
+-- A deliberate cheat, asked for. It is a private friend group and coins buy
+-- nothing but cosmetics, so this is a toy rather than a hole -- but it is
+-- still a function rather than a client-side write, because everything that
+-- touches the wallet goes through the database.
+create or replace function secret_bonus()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  me    uuid := auth.uid();
+  purse int;
+begin
+  if me is null then raise exception 'not signed in'; end if;
+  update profiles set coins = coins + 10000 where id = me returning coins into purse;
+  return jsonb_build_object('ok', true, 'coins', purse);
+end $fn$;
+
+grant execute on function secret_bonus() to authenticated;
+
+-- ------------------------------------------------------------ new cosmetics
+insert into shop_items (id, name, kind, price, rarity, is_default, blurb) values
+  ('trail_bubbles',   'Bubbles',        'trail',       210,  'common',    false, 'Soap that pops as it fades.'),
+  ('trail_lightning', 'Lightning',      'trail',       540,  'epic',      false, 'Forked arcs between the last positions.'),
+  ('trail_petals',    'Petals',         'trail',       470,  'rare',      false, 'Drifts and spins after the ball.'),
+  ('trail_void',      'Void',           'trail',       1200, 'legendary', false, 'Erases the pitch behind it for a moment.'),
+
+  ('fx_earthquake',   'Earthquake',     'goalfx',      300,  'common',    false, 'The whole pitch shudders.'),
+  ('fx_meteor',       'Meteor',         'goalfx',      620,  'rare',      false, 'Something lands where the ball did.'),
+  ('fx_snowstorm',    'Snowstorm',      'goalfx',      560,  'rare',      false, 'A whiteout, briefly.'),
+  ('fx_supernova',    'Supernova',      'goalfx',      1400, 'legendary', false, 'The screen gives up for a second.'),
+
+  ('cel_ratio',       'Ratio',          'celebration', 160,  'common',    false, 'Unkind, and effective.'),
+  ('cel_calculated',  'Calculated',     'celebration', 240,  'rare',      false, 'Pretend you meant it.'),
+  ('cel_nomistakes',  'No mistakes',    'celebration', 300,  'rare',      false, 'Bob Ross would be proud.'),
+  ('cel_getgood',     'Get good',       'celebration', 420,  'epic',      false, 'Timeless.'),
+  ('cel_thanks',      'Thanks, keeper', 'celebration', 380,  'rare',      false, 'Credit where it is due.'),
+
+  ('ball_cube',       'Cube',           'ball',        520,  'epic',      false, 'It should not roll. It does.'),
+  ('ball_smiley',     'Smiley',         'ball',        260,  'common',    false, 'Cheerful about being kicked.'),
+  ('ball_planet',     'Planet',         'ball',        820,  'epic',      false, 'Rings and all.'),
+  ('ball_moon',       'Moon',           'ball',        640,  'rare',      false, 'Cratered, grey, faintly ominous.')
+on conflict (id) do update
+  set name = excluded.name,
+      kind = excluded.kind,
+      price = excluded.price,
+      rarity = excluded.rarity,
+      is_default = excluded.is_default,
+      blurb = excluded.blurb;

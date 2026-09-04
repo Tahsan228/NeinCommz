@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MAIN_ROOM, type Room } from '../../lib/types';
+import { uploadImage } from '../../lib/supabase';
+import { AVATAR_SHRINK, shrinkImage } from '../../lib/image';
 import { useSession } from '../../state/session';
 import { useDirectory } from '../../state/directory';
 import { useRooms } from '../../state/rooms';
@@ -18,6 +20,24 @@ export function RoomEditor({ room, onClose }: { room: Room; onClose: () => void 
   const isMain = room.id === MAIN_ROOM;
 
   const [name, setName] = useState(room.name);
+  const [uploading, setUploading] = useState(false);
+  const [iconError, setIconError] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const takeIcon = async (f: File | undefined) => {
+    if (!f || !profile) return;
+    setIconError('');
+    setUploading(true);
+    try {
+      const small = await shrinkImage(f, AVATAR_SHRINK);
+      const url = await uploadImage(small, 'roomicons', profile.id);
+      await updateRoom(room.id, { icon_url: url });
+    } catch (e) {
+      setIconError(e instanceof Error ? e.message : 'Could not use that image.');
+    } finally {
+      setUploading(false);
+    }
+  };
   const [backdrop, setBackdrop] = useState(room.backdrop_url ?? '');
   const [backdropError, setBackdropError] = useState('');
 
@@ -46,7 +66,58 @@ export function RoomEditor({ room, onClose }: { room: Room; onClose: () => void 
           </Field>
 
           <Field label="Icon">
-            <div className="emoji-grid">
+            <div className="pfp-editor">
+              <div className="pfp-preview" style={{ ['--av' as string]: '#4a9de0' }}>
+                {uploading ? (
+                  <span className="spinner" />
+                ) : room.icon_url ? (
+                  <img src={room.icon_url} alt="" />
+                ) : (
+                  <span style={{ position: 'relative', zIndex: 1 }}>
+                    {room.icon_emoji || '💬'}
+                  </span>
+                )}
+              </div>
+
+              <div className="pfp-actions">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => {
+                    void takeIcon(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={uploading}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Icon name="upload" size={15} />
+                  {room.icon_url ? 'Change picture' : 'Upload a picture'}
+                </button>
+                {room.icon_url && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => void updateRoom(room.id, { icon_url: null })}
+                  >
+                    <Icon name="trash" size={15} />
+                    Use an emoji instead
+                  </button>
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--ink-faint)' }}>
+                  Any size — it gets resized for you.
+                </div>
+              </div>
+            </div>
+
+            {iconError && <p className="err">{iconError}</p>}
+
+            <div className="emoji-grid" style={room.icon_url ? { opacity: 0.5 } : undefined}>
               {EMOJI_CHOICES.map((e) => (
                 <button
                   key={e}

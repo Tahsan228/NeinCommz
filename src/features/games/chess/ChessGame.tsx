@@ -50,6 +50,8 @@ interface ChessState {
   reason: string | null;
   /** The move just played, for the slide animation and the highlight. */
   last: { from: number; to: number } | null;
+  /** Which game this is within the room, so each one is rated separately. */
+  round: number;
 }
 
 function readState(s: Record<string, unknown>): ChessState {
@@ -64,6 +66,7 @@ function readState(s: Record<string, unknown>): ChessState {
     winner: (s.winner as ChessState['winner']) ?? null,
     reason: (s.reason as string | null) ?? null,
     last: (s.last as { from: number; to: number } | null) ?? null,
+    round: (s.round as number) ?? 1,
   };
 }
 
@@ -208,8 +211,9 @@ export function ChessGame({
               score: 0,
             },
           ],
+      state.round,
     );
-  }, [isHost, state.winner, state.bot, state.white, state.black, session.id, award]);
+  }, [isHost, state.winner, state.bot, state.white, state.black, state.round, session.id, award]);
 
   /* ------------------------------------------------------------- starts -- */
   const startVersus = async () => {
@@ -227,6 +231,7 @@ export function ChessGame({
         winner: null,
         reason: null,
         last: null,
+        round: state.round + 1,
       },
       'active',
     );
@@ -246,6 +251,7 @@ export function ChessGame({
         winner: null,
         reason: null,
         last: null,
+        round: state.round + 1,
       },
       'active',
     );
@@ -253,7 +259,9 @@ export function ChessGame({
 
   const backToLobby = () => {
     awardedRef.current = false;
-    void setState(session.id, { ...readState({}), phase: 'lobby' }, 'lobby');
+    // Keep the round counter: a fresh game in the same room has to report a
+    // round nobody has been paid for yet.
+    void setState(session.id, { ...readState({}), phase: 'lobby', round: state.round }, 'lobby');
   };
 
   const resign = () => {

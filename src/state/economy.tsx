@@ -62,7 +62,7 @@ interface EconomyApi {
   buy: (itemId: string) => Promise<string | null>;
   equip: (kind: string, itemId: string) => Promise<void>;
   /** Report a finished match. Safe to call twice: the database ignores repeats. */
-  award: (sessionId: UUID, outcomes: Outcome[]) => Promise<void>;
+  award: (sessionId: UUID, outcomes: Outcome[], round?: number) => Promise<void>;
   reload: () => Promise<void>;
 }
 
@@ -137,13 +137,16 @@ export function EconomyProvider({ children }: { children: ReactNode }) {
   );
 
   const award = useCallback(
-    async (sessionId: UUID, outcomes: Outcome[]) => {
+    async (sessionId: UUID, outcomes: Outcome[], round = 1) => {
       if (!outcomes.length) return;
-      // The database is the authority here — it recomputes ratings itself and
-      // refuses to pay out the same session twice.
+      // The database is the authority here: it recomputes ratings itself and
+      // refuses to pay the same round twice. The round matters because one
+      // session hosts a whole series — without it only the opening game of a
+      // best-of ever counted.
       await supabase.rpc('award_match', {
         p_session: sessionId,
         p_outcomes: outcomes.map((o) => ({ ...o, score: o.score ?? 0 })),
+        p_round: round,
       });
       await Promise.all([reload(), refreshProfile()]);
     },

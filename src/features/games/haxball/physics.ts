@@ -154,10 +154,46 @@ export interface World {
    * the goal effect follow the ball's owner rather than whoever is watching.
    */
   lastTouch: string | null;
+  /**
+   * Recent touches, newest last. Enough history to work out an assist, and
+   * capped so it cannot grow across a long match.
+   */
+  touches: Touch[];
+  /** Filled in the moment a goal goes in, and read by the replay overlay. */
+  goal: GoalInfo | null;
+}
+
+export interface Touch {
+  id: string;
+  team: 0 | 1;
+  tick: number;
+}
+
+export interface GoalInfo {
+  /** Who put it in — which may be someone who put it in their own net. */
+  scorer: string | null;
+  /** The team credited with the goal. */
+  team: 0 | 1;
+  assist: string | null;
+  ownGoal: boolean;
+  /** The tick the scoring touch happened, so the replay can slow down there. */
+  shotTick: number;
+  /** Where the ball crossed, for the camera. */
+  x: number;
+  y: number;
 }
 
 /** Three seconds at 60Hz, so everyone can find their player before the whistle. */
 export const COUNTDOWN_TICKS = 180;
+
+/**
+ * How long the goal sequence runs: a beat on the scorer, the replay, then the
+ * fade. Long, because it is meant to be watched rather than sat through.
+ */
+export const CELEBRATION_TICKS = 60 * 9;
+
+/** A touch is only an assist if it was recent enough to have set the goal up. */
+const ASSIST_WINDOW_TICKS = 60 * 8;
 
 /**
  * Is the ball close enough for this player to strike it?
@@ -238,6 +274,8 @@ export function createWorld(
     winner: null,
     countdown: COUNTDOWN_TICKS,
     lastTouch: null,
+    touches: [],
+    goal: null,
   };
 }
 
@@ -276,7 +314,13 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
   if (w.celebrating > 0) {
     w.celebrating--;
-    if (w.celebrating === 0) resetKickoff(w);
+    if (w.celebrating === 0) {
+      resetKickoff(w);
+      w.goal = null;
+      // Restart behind a countdown, the same as the opening whistle, so
+      // nobody is caught still watching the replay when play resumes.
+      if (!w.finished) w.countdown = COUNTDOWN_TICKS;
+    }
     checkEnd(w);
     return;
   }
@@ -322,7 +366,7 @@ export function step(w: World, inputs: Map<string, Input>): void {
         w.ball.vx += p.aimX * power;
         w.ball.vy += p.aimY * power;
         p.cooldown = KICK_COOLDOWN;
-        w.lastTouch = p.id;
+        noteTouch(w, p);
       }
     }
   }
@@ -348,7 +392,7 @@ export function step(w: World, inputs: Map<string, Input>): void {
       collide(w.players[i], w.players[j]);
     }
     // A bump counts as a touch too, not only a deliberate kick.
-    if (collide(w.players[i], w.ball)) w.lastTouch = w.players[i].id;
+    if (collide(w.players[i], w.ball)) noteTouch(w, w.players[i]);
   }
 
   for (const p of w.players) confinePlayer(p, w.pitch);
@@ -358,10 +402,57 @@ export function step(w: World, inputs: Map<string, Input>): void {
     if (scored === 0) w.score.red++;
     else w.score.blue++;
     w.lastScorer = scored;
-    w.celebrating = 110;
+    w.celebrating = CELEBRATION_TICKS;
+    w.goal = describeGoal(w, scored);
   }
 
   checkEnd(w);
+}
+
+/** Remember a touch, collapsing a run of touches by the same player. */
+function noteTouch(w: World, p: HaxPlayer): void {
+  w.lastTouch = p.id;
+  const last = w.touches[w.touches.length - 1];
+  if (last && last.id === p.id) {
+    last.tick = w.tick;
+    return;
+  }
+  w.touches.push({ id: p.id, team: p.team, tick: w.tick });
+  if (w.touches.length > 12) w.touches.shift();
+}
+
+/**
+ * Work out who gets the credit.
+ *
+ * The scorer is whoever touched it last. The assist is the touch before that
+ * by a different player on the same side — and only if it was recent, because
+ * a pass two minutes ago did not set this up. Putting it into your own net
+ * credits the other team and nobody gets an assist for it.
+ */
+export function describeGoal(w: World, team: 0 | 1): GoalInfo {
+  const touches = w.touches;
+  const last = touches[touches.length - 1] ?? null;
+  const ownGoal = last ? last.team !== team : false;
+
+  let assist: string | null = null;
+  if (last && !ownGoal) {
+    for (let i = touches.length - 2; i >= 0; i--) {
+      const t = touches[i];
+      if (t.id === last.id) continue;
+      if (t.team === last.team && w.tick - t.tick <= ASSIST_WINDOW_TICKS) assist = t.id;
+      break;
+    }
+  }
+
+  return {
+    scorer: last?.id ?? null,
+    team,
+    assist,
+    ownGoal,
+    shotTick: last?.tick ?? w.tick,
+    x: w.ball.x,
+    y: w.ball.y,
+  };
 }
 
 /** Push two overlapping discs apart and exchange momentum along the normal. */
@@ -495,6 +586,8 @@ export interface Snapshot {
   k: number;
   /** last player to touch the ball, so cosmetics follow its owner */
   lt: string | null;
+  /** the goal being celebrated, if any */
+  g: GoalInfo | null;
   /** finished flag + winner, so clients can show the result without guessing */
   f: 0 | 1;
   w: number;
@@ -519,6 +612,7 @@ export function snapshot(w: World): Snapshot {
     c: w.celebrating,
     k: w.countdown,
     lt: w.lastTouch,
+    g: w.goal,
     f: w.finished ? 1 : 0,
     w: w.winner === null ? -1 : w.winner,
   };
@@ -535,6 +629,7 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.celebrating = s.c;
   w.countdown = s.k ?? 0;
   w.lastTouch = s.lt ?? null;
+  w.goal = s.g ?? null;
   w.finished = s.f === 1;
   w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 

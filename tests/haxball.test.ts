@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BALL_R,
+  CELEBRATION_TICKS,
   COUNTDOWN_TICKS,
   DEFAULT_RULES,
   PLAYER_R,
@@ -8,6 +9,7 @@ import {
   canKick,
   confinePlayer,
   createWorld,
+  describeGoal,
   step,
   type Input,
   type Rules,
@@ -283,5 +285,103 @@ describe('players in the goal', () => {
   it('has a mouth wide enough for two players to share', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
     expect(w.pitch.goalHeight).toBeGreaterThan(PLAYER_R * 4);
+  });
+});
+
+describe('who gets the credit', () => {
+  function pitch() {
+    const w = createWorld([
+      { id: 'red1', team: 0 },
+      { id: 'red2', team: 0 },
+      { id: 'blue1', team: 1 },
+    ]);
+    w.countdown = 0;
+    return w;
+  }
+
+  it('credits the last toucher with the goal', () => {
+    const w = pitch();
+    w.touches = [{ id: 'red1', team: 0, tick: 100 }];
+    w.tick = 110;
+    const g = describeGoal(w, 0);
+    expect(g.scorer).toBe('red1');
+    expect(g.ownGoal).toBe(false);
+  });
+
+  it('credits an assist to the team-mate who touched it before', () => {
+    const w = pitch();
+    w.touches = [
+      { id: 'red2', team: 0, tick: 80 },
+      { id: 'red1', team: 0, tick: 100 },
+    ];
+    w.tick = 110;
+    expect(describeGoal(w, 0).assist).toBe('red2');
+  });
+
+  it('gives no assist to an opponent', () => {
+    const w = pitch();
+    w.touches = [
+      { id: 'blue1', team: 1, tick: 80 },
+      { id: 'red1', team: 0, tick: 100 },
+    ];
+    w.tick = 110;
+    expect(describeGoal(w, 0).assist).toBeNull();
+  });
+
+  it('gives no assist for a pass from ages ago', () => {
+    const w = pitch();
+    w.touches = [
+      { id: 'red2', team: 0, tick: 10 },
+      { id: 'red1', team: 0, tick: 1000 },
+    ];
+    w.tick = 1010;
+    expect(describeGoal(w, 0).assist).toBeNull();
+  });
+
+  it('marks an own goal and awards nobody an assist for it', () => {
+    const w = pitch();
+    // A red player put it in, but blue is credited with the goal.
+    w.touches = [
+      { id: 'red2', team: 0, tick: 80 },
+      { id: 'red1', team: 0, tick: 100 },
+    ];
+    w.tick = 110;
+    const g = describeGoal(w, 1);
+    expect(g.ownGoal).toBe(true);
+    expect(g.assist).toBeNull();
+    expect(g.team).toBe(1);
+  });
+
+  it('survives a goal with no recorded touches at all', () => {
+    const w = pitch();
+    w.touches = [];
+    const g = describeGoal(w, 0);
+    expect(g.scorer).toBeNull();
+    expect(g.assist).toBeNull();
+  });
+
+  it('collapses a run of touches by the same player', () => {
+    const w = pitch();
+    const input: Input = { up: false, down: false, left: false, right: false, kick: false };
+    w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 1);
+    w.players[0].y = w.ball.y;
+    for (let i = 0; i < 30; i++) step(w, new Map([['red1', input]]));
+    // Repeated contact by one player must not fill the history and push the
+    // real assist out of the window.
+    expect(w.touches.filter((t) => t.id === 'red1').length).toBeLessThanOrEqual(2);
+  });
+
+  it('restarts behind a countdown once the celebration ends', () => {
+    const w = pitch();
+    const { right, goalTop, goalBottom } = bounds(w.pitch);
+    w.ball.x = right + BALL_R + 2;
+    w.ball.y = (goalTop + goalBottom) / 2;
+    step(w, new Map());
+    expect(w.celebrating).toBeGreaterThan(0);
+
+    for (let i = 0; i < CELEBRATION_TICKS + 2; i++) step(w, new Map());
+    expect(w.celebrating).toBe(0);
+    expect(w.countdown).toBeGreaterThan(0);
+    expect(w.goal).toBeNull();
   });
 });
