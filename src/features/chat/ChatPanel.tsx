@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { errText, supabase } from '../../lib/supabase';
 import { MAIN_ROOM, type Message, type Reaction, type UUID } from '../../lib/types';
 import { formatDaySeparator, formatStamp, sameDay } from '../../lib/time';
+import { splitLinks } from '../../lib/linkify';
 import { useSession } from '../../state/session';
 import { useDirectory } from '../../state/directory';
 import { Avatar } from '../../components/ui';
@@ -28,6 +29,33 @@ function Tail({ mine }: { mine: boolean }) {
   );
 }
 
+/**
+ * Message text with links made clickable. Built from parts rather than HTML —
+ * the text is written by other people, so it must never reach innerHTML.
+ */
+function MessageText({ body }: { body: string }) {
+  return (
+    <>
+      {splitLinks(body).map((part, i) =>
+        part.kind === 'link' ? (
+          <a
+            key={i}
+            href={part.href}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="msg-link"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part.value}
+          </a>
+        ) : (
+          <span key={i}>{part.value}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 export function ChatPanel() {
   const { profile, prefs } = useSession();
   const { byId, profiles } = useDirectory();
@@ -41,6 +69,11 @@ export function ChatPanel() {
   const [tapbackFor, setTapbackFor] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [typers, setTypers] = useState<Map<UUID, number>>(new Map());
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Message[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [hit, setHit] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -199,6 +232,64 @@ export function ChatPanel() {
     void typingChannel.current?.send({ type: 'broadcast', event: 'typing', payload: { id: me } });
   }, [me]);
 
+  /* -------------------------------------------------------------- search -- */
+  // Searched server-side so it reaches the whole history, not just the page
+  // that happens to be on screen.
+  useEffect(() => {
+    const q = query.trim();
+    if (!searchOpen || q.length < 2) {
+      setResults(null);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      setSearching(true);
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('room_id', MAIN_ROOM)
+        .ilike('body', '%' + q + '%')
+        .order('created_at', { ascending: false })
+        .limit(60);
+      setResults((data as Message[]) ?? []);
+      setSearching(false);
+    }, 280);
+    return () => window.clearTimeout(t);
+  }, [query, searchOpen]);
+
+  /** Reopen the conversation around a search result and flash it. */
+  const jumpTo = useCallback(async (target: Message) => {
+    const [{ data: before }, { data: after }] = await Promise.all([
+      supabase
+        .from('messages')
+        .select('*')
+        .eq('room_id', MAIN_ROOM)
+        .lte('created_at', target.created_at)
+        .order('created_at', { ascending: false })
+        .limit(60),
+      supabase
+        .from('messages')
+        .select('*')
+        .eq('room_id', MAIN_ROOM)
+        .gt('created_at', target.created_at)
+        .order('created_at', { ascending: true })
+        .limit(30),
+    ]);
+
+    const older = ((before as Message[]) ?? []).reverse();
+    setMessages([...older, ...((after as Message[]) ?? [])]);
+    setHasOlder(older.length === 60);
+    setSearchOpen(false);
+    setQuery('');
+    setResults(null);
+    setHit(target.id);
+    pinnedRef.current = false;
+
+    requestAnimationFrame(() => {
+      document.getElementById('msg-' + target.id)?.scrollIntoView({ block: 'center' });
+    });
+    window.setTimeout(() => setHit(null), 2600);
+  }, []);
+
   /* ----------------------------------------------------------- scrolling -- */
   const onScroll = () => {
     const el = scrollRef.current;
@@ -342,15 +433,89 @@ export function ChatPanel() {
   return (
     <>
       <div className="chat-head">
-        <div style={{ flex: 1 }}>
-          <h2>Main</h2>
-          <div className="sub">
-            {profiles.length} {profiles.length === 1 ? 'person' : 'people'} · every message kept
-          </div>
-        </div>
+        {searchOpen ? (
+          <>
+            <Icon name="search" size={16} style={{ color: 'var(--ink-faint)', flex: 'none' }} />
+            <input
+              className="input"
+              style={{ padding: '7px 11px', fontSize: 13.5 }}
+              autoFocus
+              placeholder="Search every message…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchOpen(false);
+                  setQuery('');
+                }
+              }}
+            />
+            <button
+              className="btn btn-ghost btn-icon"
+              aria-label="Close search"
+              onClick={() => {
+                setSearchOpen(false);
+                setQuery('');
+              }}
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }}>
+              <h2>Main</h2>
+              <div className="sub">
+                {profiles.length} {profiles.length === 1 ? 'person' : 'people'} · every message kept
+              </div>
+            </div>
+            <button
+              className="btn btn-ghost btn-icon"
+              title="Search messages"
+              aria-label="Search messages"
+              onClick={() => setSearchOpen(true)}
+            >
+              <Icon name="search" size={17} />
+            </button>
+          </>
+        )}
       </div>
 
-      <div className="msgs" ref={scrollRef} onScroll={onScroll}>
+      {searchOpen && (
+        <div className="search-results">
+          {searching && <div className="empty">Searching…</div>}
+          {!searching && query.trim().length < 2 && (
+            <div className="empty">Type at least two characters.</div>
+          )}
+          {!searching && results?.length === 0 && (
+            <div className="empty">Nothing matches that.</div>
+          )}
+          {!searching &&
+            results?.map((r) => {
+              const who = byId.get(r.author_id);
+              return (
+                <button key={r.id} className="search-hit" onClick={() => void jumpTo(r)}>
+                  <Avatar
+                    emoji={who?.avatar_emoji ?? '🙂'}
+                    url={who?.avatar_url}
+                    color={who?.avatar_color ?? '#555'}
+                    size={24}
+                    name={who?.display_name}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="search-hit-meta">
+                      {who?.display_name ?? 'Someone'} · {formatDaySeparator(r.created_at)}{' '}
+                      {formatStamp(r.created_at, prefs.clock24)}
+                    </div>
+                    <div className="search-hit-body">{r.body}</div>
+                  </div>
+                </button>
+              );
+            })}
+        </div>
+      )}
+
+      <div className="msgs" ref={scrollRef} onScroll={onScroll} hidden={searchOpen}>
         {loading && <div className="empty">Loading history…</div>}
 
         {!loading && hasOlder && (
@@ -383,7 +548,7 @@ export function ChatPanel() {
           const quoted = m.reply_to ? messagesById.get(m.reply_to) : null;
 
           return (
-            <div key={m.id}>
+            <div key={m.id} id={`msg-${m.id}`}>
               {newDay && <div className="daysep">{formatDaySeparator(m.created_at)}</div>}
               {startsGroup && !mine && (
                 <div className="msg-author">{author?.display_name ?? 'Someone'}</div>
@@ -437,18 +602,20 @@ export function ChatPanel() {
                           data-tail={endsGroup && prefs.bubbleTails ? (mine ? 'mine' : 'them') : undefined}
                           style={{ marginTop: 4 }}
                         >
-                          {m.body}
+                          <MessageText body={m.body} />
                           {endsGroup && prefs.bubbleTails && <Tail mine={mine} />}
                         </div>
                       )}
                     </>
                   ) : (
                     <div
-                      className={`bubble ${mine ? 'bubble-mine' : 'bubble-them'}`}
+                      className={`bubble ${mine ? 'bubble-mine' : 'bubble-them'} ${
+                        hit === m.id ? 'bubble-hit' : ''
+                      }`}
                       data-tail={endsGroup && prefs.bubbleTails ? (mine ? 'mine' : 'them') : undefined}
                       style={m.pending ? { opacity: 0.6 } : undefined}
                     >
-                      {m.body}
+                      {m.body && <MessageText body={m.body} />}
                       {endsGroup && prefs.bubbleTails && <Tail mine={mine} />}
                     </div>
                   )}

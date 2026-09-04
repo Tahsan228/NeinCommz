@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import {
   BALL_R,
+  COUNTDOWN_TICKS,
   DEFAULT_RULES,
   PLAYER_R,
   bounds,
+  canKick,
   createWorld,
   step,
   type Input,
+  type Rules,
 } from '../src/features/games/haxball/physics';
+
+/**
+ * Matches now open with a countdown during which nothing moves, so anything
+ * testing the simulation itself has to get past the whistle first.
+ */
+function kickedOff(players: { id: string; team: 0 | 1 }[], rules?: Rules) {
+  const w = createWorld(players, rules);
+  w.countdown = 0;
+  return w;
+}
 
 const HOLD: Input = { up: false, down: false, left: false, right: false, kick: true };
 const RELEASE: Input = { up: false, down: false, left: false, right: false, kick: false };
@@ -15,7 +28,7 @@ const RIGHT: Input = { up: false, down: false, left: false, right: true, kick: f
 
 /** A world with one player parked just left of a stationary ball. */
 function nearBall() {
-  const w = createWorld([{ id: 'a', team: 0 }]);
+  const w = kickedOff([{ id: 'a', team: 0 }]);
   w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
   w.players[0].y = w.ball.y;
   w.players[0].vx = 0;
@@ -60,7 +73,7 @@ describe('charged shots', () => {
   });
 
   it('does nothing on release when the ball is out of reach', () => {
-    const w = createWorld([{ id: 'a', team: 0 }]);
+    const w = kickedOff([{ id: 'a', team: 0 }]);
     w.players[0].x = 60;
     w.players[0].y = 60;
     for (let i = 0; i < 40; i++) step(w, new Map([['a', HOLD]]));
@@ -79,7 +92,7 @@ describe('charged shots', () => {
 
 describe('pace', () => {
   it('keeps players well under the old top speed', () => {
-    const w = createWorld([{ id: 'a', team: 0 }]);
+    const w = kickedOff([{ id: 'a', team: 0 }]);
     for (let i = 0; i < 240; i++) step(w, new Map([['a', RIGHT]]));
     // The previous settings topped out near 6.6 px/tick; this is deliberately
     // about half that, which is the whole point of the change.
@@ -87,8 +100,8 @@ describe('pace', () => {
   });
 
   it('still lets a host wind the speed back up', () => {
-    const slow = createWorld([{ id: 'a', team: 0 }]);
-    const fast = createWorld([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, playerAccel: 0.4 });
+    const slow = kickedOff([{ id: 'a', team: 0 }]);
+    const fast = kickedOff([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, playerAccel: 0.4 });
     for (let i = 0; i < 240; i++) {
       step(slow, new Map([['a', RIGHT]]));
       step(fast, new Map([['a', RIGHT]]));
@@ -98,7 +111,7 @@ describe('pace', () => {
 });
 
 describe('match limits', () => {
-  function scoreForRed(w: ReturnType<typeof createWorld>) {
+  function scoreForRed(w: ReturnType<typeof kickedOff>) {
     const { right, goalTop, goalBottom } = bounds(w.pitch);
     w.ball.x = right + BALL_R + 2;
     w.ball.y = (goalTop + goalBottom) / 2;
@@ -106,7 +119,7 @@ describe('match limits', () => {
   }
 
   it('ends the match when the score limit is reached', () => {
-    const w = createWorld([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, scoreLimit: 1 });
+    const w = kickedOff([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, scoreLimit: 1 });
     scoreForRed(w);
     expect(w.score.red).toBe(1);
 
@@ -117,7 +130,7 @@ describe('match limits', () => {
   });
 
   it('keeps playing when the score limit is not yet met', () => {
-    const w = createWorld([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, scoreLimit: 3 });
+    const w = kickedOff([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, scoreLimit: 3 });
     scoreForRed(w);
     for (let i = 0; i < 200; i++) step(w, new Map());
     expect(w.finished).toBe(false);
@@ -125,7 +138,7 @@ describe('match limits', () => {
   });
 
   it('ends on the clock and calls a level game a draw', () => {
-    const w = createWorld([{ id: 'a', team: 0 }], {
+    const w = kickedOff([{ id: 'a', team: 0 }], {
       ...DEFAULT_RULES,
       scoreLimit: 0,
       timeLimitSec: 1,
@@ -136,7 +149,7 @@ describe('match limits', () => {
   });
 
   it('stops stepping once finished', () => {
-    const w = createWorld([{ id: 'a', team: 0 }], {
+    const w = kickedOff([{ id: 'a', team: 0 }], {
       ...DEFAULT_RULES,
       scoreLimit: 0,
       timeLimitSec: 1,
@@ -148,12 +161,64 @@ describe('match limits', () => {
   });
 
   it('plays on forever when both limits are switched off', () => {
-    const w = createWorld([{ id: 'a', team: 0 }], {
+    const w = kickedOff([{ id: 'a', team: 0 }], {
       ...DEFAULT_RULES,
       scoreLimit: 0,
       timeLimitSec: 0,
     });
     for (let i = 0; i < 400; i++) step(w, new Map());
     expect(w.finished).toBe(false);
+  });
+});
+
+
+describe('kickoff countdown', () => {
+  it('freezes everything until the whistle', () => {
+    const w = createWorld([{ id: 'a', team: 0 }]);
+    expect(w.countdown).toBe(COUNTDOWN_TICKS);
+
+    const startX = w.players[0].x;
+    const right: Input = { up: false, down: false, left: false, right: true, kick: false };
+    for (let i = 0; i < 60; i++) step(w, new Map([['a', right]]));
+
+    // Still counting down, so nobody has moved and the clock has not started.
+    expect(w.players[0].x).toBe(startX);
+    expect(w.tick).toBe(0);
+    expect(w.countdown).toBe(COUNTDOWN_TICKS - 60);
+  });
+
+  it('releases play once it reaches zero', () => {
+    const w = createWorld([{ id: 'a', team: 0 }]);
+    const right: Input = { up: false, down: false, left: false, right: true, kick: false };
+    for (let i = 0; i < COUNTDOWN_TICKS; i++) step(w, new Map([['a', right]]));
+    expect(w.countdown).toBe(0);
+
+    const startX = w.players[0].x;
+    for (let i = 0; i < 30; i++) step(w, new Map([['a', right]]));
+    expect(w.players[0].x).toBeGreaterThan(startX);
+    expect(w.tick).toBe(30);
+  });
+});
+
+describe('reach', () => {
+  it('knows when the ball is close enough to strike', () => {
+    const w = nearBall();
+    expect(canKick(w.players[0], w.ball)).toBe(true);
+  });
+
+  it('knows when it is not, which is what hides the aim guide', () => {
+    const w = nearBall();
+    w.players[0].x = 40;
+    w.players[0].y = 40;
+    expect(canKick(w.players[0], w.ball)).toBe(false);
+  });
+
+  it('builds no charge at all while the ball is out of reach', () => {
+    const w = nearBall();
+    w.players[0].x = 40;
+    w.players[0].y = 40;
+    const hold: Input = { up: false, down: false, left: false, right: false, kick: true };
+    for (let i = 0; i < 60; i++) step(w, new Map([['a', hold]]));
+    expect(w.players[0].charge).toBe(0);
   });
 });

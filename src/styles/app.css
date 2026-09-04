@@ -428,9 +428,9 @@
 }
 
 .bubble-them {
-  background: linear-gradient(180deg, #34343e, #2b2b34);
-  color: var(--ink);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 3px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(180deg, var(--bubble-them-top), var(--bubble-them-bottom));
+  color: var(--bubble-them-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
 .bubble-mine {
@@ -451,7 +451,7 @@
 }
 .tail-them {
   left: -11px;
-  fill: #2b2b34;
+  fill: var(--bubble-them-bottom);
 }
 .tail-mine {
   right: -11px;
@@ -525,8 +525,9 @@
   font-size: 11px;
   padding: 2px 7px;
   border-radius: var(--r-pill);
-  background: linear-gradient(180deg, #3a3a45, #2e2e38);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 5px rgba(0, 0, 0, 0.45);
+  background: var(--control-fill);
+  color: var(--ink);
+  box-shadow: var(--lift-1);
   border: 1px solid var(--edge);
   transition: transform var(--fast);
 }
@@ -569,7 +570,7 @@
   gap: 2px;
   padding: 5px;
   border-radius: var(--r-pill);
-  background: linear-gradient(180deg, #35353f, #26262e);
+  background: var(--panel-fill);
   box-shadow: var(--lift-3);
   border: 1px solid var(--edge);
   z-index: 5;
@@ -1581,4 +1582,119 @@
 .album-dot[data-on='true'] {
   background: var(--accent);
   transform: scale(1.3);
+}
+
+/* ============================================== links + message search === */
+
+.msg-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.msg-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.bubble-hit {
+  animation: hit-flash 2.4s ease-out;
+}
+@keyframes hit-flash {
+  0%, 45% { box-shadow: 0 0 0 3px var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 10px 10px;
+}
+
+.search-hit {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: var(--r-row);
+  transition: background var(--fast);
+}
+.search-hit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.search-hit-meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 2px;
+}
+
+.search-hit-body {
+  font-size: 13.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ========================================================= avatar crop === */
+
+.cropper {
+  border-radius: var(--r-card);
+  box-shadow: var(--lift-2);
+  border: 1px solid var(--edge);
+  cursor: grab;
+  touch-action: none;
+  display: block;
+  max-width: 100%;
+}
+.cropper:active {
+  cursor: grabbing;
+}
+
+/* ============================================================== logo ===== */
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+
+.logo-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 9px;
+  background: var(--accent-fill);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3),
+              0 2px 6px rgba(0, 0, 0, 0.42);
+  padding: 2px;
+}
+
+.logo-word {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-size: 15.5px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.logo-word b {
+  font-weight: 750;
+  color: var(--ink);
+}
+.logo-word span {
+  font-weight: 450;
+  color: var(--ink-dim);
+}
+
+/* The gate shows the mark alone, large, with no plate behind it. */
+.gate-mark .logo-mark {
+  background: none;
+  box-shadow: none;
+  padding: 0;
 }

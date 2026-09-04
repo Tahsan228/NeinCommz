@@ -166,6 +166,7 @@ describe('haxball physics', () => {
 
   it('moves a player who is holding a direction', () => {
     const w = createWorld([{ id: 'a', team: 0 }]);
+    w.countdown = 0; // skip the kickoff freeze
     const startX = w.players[0].x;
     const input: Input = { up: false, down: false, left: false, right: true, kick: false };
     for (let i = 0; i < 10; i++) step(w, new Map([['a', input]]));
@@ -175,6 +176,8 @@ describe('haxball physics', () => {
   it('does not let diagonal movement outrun the axes', () => {
     const straight = createWorld([{ id: 'a', team: 0 }]);
     const diagonal = createWorld([{ id: 'a', team: 0 }]);
+    straight.countdown = 0;
+    diagonal.countdown = 0;
     const right: Input = { up: false, down: false, left: false, right: true, kick: false };
     const rightUp: Input = { up: true, down: false, left: false, right: true, kick: false };
 
@@ -191,6 +194,7 @@ describe('haxball physics', () => {
       { id: 'a', team: 0 },
       { id: 'b', team: 1 },
     ]);
+    w.countdown = 0;
     const { right, goalTop, goalBottom } = bounds();
     w.ball.x = right + BALL_R + 2;
     w.ball.y = (goalTop + goalBottom) / 2;

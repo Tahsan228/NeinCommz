@@ -16,6 +16,12 @@ interface SessionApi {
   profile: Profile | null;
   prefs: Prefs;
   loading: boolean;
+  /**
+   * False until the very first getSession() call has answered. Anything that
+   * treats a null session as "signed out" must wait for this, or it will say
+   * so during the moment before the stored session has been read back.
+   */
+  authReady: boolean;
   /** True when the user arrived from a password-reset email link. */
   recovering: boolean;
   signUp: (input: SignUpInput) => Promise<void>;
@@ -45,6 +51,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const [recovering, setRecovering] = useState(false);
 
   // Supabase drops the recovery token in the URL fragment. Catch it before
@@ -60,12 +67,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       if (!alive) return;
       setSession(data.session);
+      setAuthReady(true);
       if (!data.session) setLoading(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true);
       setSession(s);
+      setAuthReady(true);
       if (!s) {
         setProfile(null);
         setLoading(false);
@@ -267,6 +276,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       profile,
       prefs,
       loading,
+      authReady,
       recovering,
       signUp,
       signIn,
@@ -279,7 +289,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refreshProfile,
     }),
     [
-      session, profile, prefs, loading, recovering, signUp, signIn, signOut,
+      session, profile, prefs, loading, authReady, recovering, signUp, signIn, signOut,
       sendReset, completeReset, savePrefs, saveProfile, changePassword, refreshProfile,
     ],
   );

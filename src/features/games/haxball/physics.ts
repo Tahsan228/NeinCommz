@@ -60,11 +60,11 @@ export interface Rules {
 // Deliberately sluggish: the old values crossed the pitch in about two
 // seconds, which left no time to position or aim. This is roughly half that.
 export const DEFAULT_RULES: Rules = {
-  playerAccel: 0.22,
+  playerAccel: 0.14,
   playerDamping: 0.935,
   ballDamping: 0.99,
-  kickMin: 2.2,
-  kickMax: 9.5,
+  kickMin: 1.6,
+  kickMax: 6,
   chargeRate: 0.022,
   maxBallSpeed: 18,
   scoreLimit: 5,
@@ -72,14 +72,28 @@ export const DEFAULT_RULES: Rules = {
   pitchSize: 'normal',
 };
 
+/**
+ * What was previously labelled "Snail" is the pace the game actually wants, so
+ * the labels shifted rather than the physics: Normal is the old Snail, with
+ * room on both sides of it.
+ */
 export const SPEED_PRESETS: Record<string, number> = {
-  Snail: 0.14,
-  Slow: 0.22,
-  Normal: 0.3,
-  Fast: 0.4,
+  Slower: 0.09,
+  Slow: 0.115,
+  Normal: 0.14,
+  Faster: 0.19,
+  Fastest: 0.26,
 };
 
-const KICK_RANGE = 8;
+/** Likewise: the old "Gentle" is the sensible default. */
+export const POWER_PRESETS: Record<string, number> = {
+  Softer: 4,
+  Normal: 6,
+  Harder: 9.5,
+  Cannon: 13,
+};
+
+export const KICK_RANGE = 8;
 const KICK_COOLDOWN = 12;
 /** Ticks of full-charge hold before it stops building. */
 export const MAX_CHARGE = 1;
@@ -130,6 +144,21 @@ export interface World {
   finished: boolean;
   /** Winner of the match, or null for a draw. Only meaningful once finished. */
   winner: 0 | 1 | null;
+  /** Frames of pre-kickoff countdown left. Nothing moves while this runs. */
+  countdown: number;
+}
+
+/** Three seconds at 60Hz, so everyone can find their player before the whistle. */
+export const COUNTDOWN_TICKS = 180;
+
+/**
+ * Is the ball close enough for this player to strike it?
+ *
+ * The aim guide keys off exactly this, so charging up while the ball is on the
+ * other side of the pitch no longer draws a line to nowhere.
+ */
+export function canKick(p: { x: number; y: number; r: number }, ball: Disc): boolean {
+  return Math.hypot(ball.x - p.x, ball.y - p.y) < p.r + ball.r + KICK_RANGE;
 }
 
 export function bounds(pitch: Pitch = PITCH) {
@@ -199,6 +228,7 @@ export function createWorld(
     pitch,
     finished: false,
     winner: null,
+    countdown: COUNTDOWN_TICKS,
   };
 }
 
@@ -225,6 +255,13 @@ function checkEnd(w: World): void {
 /** Advance the world one fixed step. Mutates `w` — it is the hot loop. */
 export function step(w: World, inputs: Map<string, Input>): void {
   if (w.finished) return;
+
+  // The countdown freezes play but still advances, so the clock only starts
+  // when the match actually does.
+  if (w.countdown > 0) {
+    w.countdown--;
+    return;
+  }
 
   w.tick++;
 
@@ -261,15 +298,18 @@ export function step(w: World, inputs: Map<string, Input>): void {
       p.aimY = dy / d;
     }
 
+    const inReach = d > 0 && d < p.r + w.ball.r + KICK_RANGE;
+
     if (inp.kick) {
-      // Hold to build power; the shot goes out on release.
-      p.charge = Math.min(MAX_CHARGE, p.charge + r.chargeRate);
+      // Power only builds while the ball is actually within reach, so holding
+      // the key across the pitch neither charges nor draws an aim guide.
       p.kickHeld = true;
+      p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + r.chargeRate) : 0;
     } else if (p.kickHeld) {
       p.kickHeld = false;
       const power = r.kickMin + p.charge * (r.kickMax - r.kickMin);
       p.charge = 0;
-      if (p.cooldown === 0 && d > 0 && d < p.r + w.ball.r + KICK_RANGE) {
+      if (p.cooldown === 0 && inReach) {
         w.ball.vx += p.aimX * power;
         w.ball.vy += p.aimY * power;
         p.cooldown = KICK_COOLDOWN;
@@ -422,6 +462,8 @@ export interface Snapshot {
   p: [string, number, number, number, number, number, number, number, number][];
   s: [number, number];
   c: number;
+  /** countdown ticks remaining */
+  k: number;
   /** finished flag + winner, so clients can show the result without guessing */
   f: 0 | 1;
   w: number;
@@ -444,6 +486,7 @@ export function snapshot(w: World): Snapshot {
     ]) as Snapshot['p'],
     s: [w.score.red, w.score.blue],
     c: w.celebrating,
+    k: w.countdown,
     f: w.finished ? 1 : 0,
     w: w.winner === null ? -1 : w.winner,
   };
@@ -458,6 +501,7 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.score.red = s.s[0];
   w.score.blue = s.s[1];
   w.celebrating = s.c;
+  w.countdown = s.k ?? 0;
   w.finished = s.f === 1;
   w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 

@@ -10,8 +10,10 @@ import {
   NO_INPUT,
   PITCH_PRESETS,
   PLAYER_R,
+  POWER_PRESETS,
   SPEED_PRESETS,
   applySnapshot,
+  canKick,
   bounds,
   createWorld,
   secondsRemaining,
@@ -615,9 +617,9 @@ function HaxLobby({
                   value={String(state.rules.kickMax)}
                   onChange={(e) => patchRules({ kickMax: Number(e.target.value) })}
                 >
-                  <option value="6">Gentle</option>
-                  <option value="9.5">Normal</option>
-                  <option value="13">Cannon</option>
+                  {Object.entries(POWER_PRESETS).map(([name, v]) => (
+                    <option key={name} value={v}>{name}</option>
+                  ))}
                 </select>
               </Setting>
 
@@ -827,9 +829,11 @@ function drawPitch(
     ctx.stroke();
   }
 
-  // The aim guide, dotted, drawn only for the local player while charging.
+  // The aim guide is drawn only while the local player is charging AND the
+  // ball is within reach. Holding the key across the pitch used to draw a line
+  // to a ball nobody could hit.
   const mine = w.players.find((q) => q.id === me);
-  if (mine && mine.charge > 0.01) {
+  if (mine && mine.charge > 0.01 && canKick(mine, w.ball)) {
     const reach = 44 + mine.charge * 190;
     ctx.save();
     ctx.setLineDash([6, 7]);
@@ -901,6 +905,29 @@ function drawPitch(
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = 'rgba(0,0,0,0.5)';
   ctx.stroke();
+
+  if (w.countdown > 0) {
+    const secondsLeft = Math.ceil(w.countdown / 60);
+    // Pulse each digit as it lands, so the count reads even at a glance.
+    const within = 1 - ((w.countdown % 60) / 60);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, p.w, p.h);
+
+    ctx.save();
+    ctx.translate(midX, midY);
+    ctx.scale(1 + (1 - within) * 0.35, 1 + (1 - within) * 0.35);
+    ctx.globalAlpha = 0.35 + within * 0.65;
+    ctx.font = '700 86px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(secondsLeft > 0 ? String(secondsLeft) : 'GO', 0, 30);
+    ctx.restore();
+
+    ctx.font = '600 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('Get to your side', midX, midY + 76);
+  }
 
   if (w.celebrating > 0) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';

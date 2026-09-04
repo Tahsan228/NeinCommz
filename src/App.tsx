@@ -7,6 +7,7 @@ import { useDirectory } from './state/directory';
 import { ToastHost } from './state/toasts';
 import { Avatar, Panel, Spinner } from './components/ui';
 import { Icon } from './components/Icon';
+import { Logo } from './components/Logo';
 import { SiteGate } from './features/gate/SiteGate';
 import {
   CreateProfile,
@@ -22,7 +23,7 @@ import { QuickStatus } from './features/status/QuickStatus';
 import { SettingsModal } from './features/settings/SettingsModal';
 
 export default function App() {
-  const { session, profile, loading, recovering } = useSession();
+  const { session, profile, loading, authReady, recovering } = useSession();
   // Starts false on every load, so the front door is asked for each visit.
   const [gated, setGated] = useState(false);
   const [picking, setPicking] = useState<PublicProfile | null>(null);
@@ -33,6 +34,17 @@ export default function App() {
   if (recovering) return <ResetPasswordScreen />;
 
   if (!gated) return <SiteGate onPass={() => setGated(true)} />;
+
+  // Until the stored session has actually been read back, "no session" only
+  // means "not looked yet". Rendering the picker here is what made a refresh
+  // ask for the profile password again even though you were still signed in.
+  if (!authReady) {
+    return (
+      <div className="centered">
+        <Spinner />
+      </div>
+    );
+  }
 
   if (!session) {
     return (
@@ -75,12 +87,7 @@ function Home() {
       {!online && <div className="banner">Reconnecting… messages you send will queue up.</div>}
 
       <div className="topbar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Icon name="snowflake" size={15} strokeWidth={2} />
-          </span>
-          NeinCommz
-        </div>
+        <Logo size={26} />
         <div className="topbar-spacer" />
         <div className="clock">{formatClock(now, prefs.clock24, prefs.showSeconds)}</div>
 

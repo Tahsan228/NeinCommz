@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { errText, isConfigured, slugify, supabase } from '../../lib/supabase';
 import { AVATAR_SHRINK, formatBytes, shrinkImage } from '../../lib/image';
+import { AvatarCropper } from './AvatarCropper';
 import type { PublicProfile } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { Field, Modal, Spinner } from '../../components/ui';
@@ -46,18 +47,30 @@ export function AvatarEditor({
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [working, setWorking] = useState(false);
+  const [cropping, setCropping] = useState<File | null>(null);
 
-  // Any size goes in: the picture is resized in the browser first, so a 30 MB
-  // photo straight off a phone becomes a few hundred KB before it is uploaded.
-  const take = async (f: File | undefined) => {
+  // Any size goes in. The picture is framed by hand, then re-encoded in the
+  // browser, so a 30 MB photo off a phone becomes a few hundred KB and nothing
+  // is ever rejected for being too big.
+  const take = (f: File | undefined) => {
     if (!f) return;
     setError('');
     setNote('');
+    if (!f.type.startsWith('image/')) {
+      setError('That needs to be an image.');
+      return;
+    }
+    setCropping(f);
+  };
+
+  const cropped = async (f: File) => {
+    const original = cropping;
+    setCropping(null);
     setWorking(true);
     try {
       const shrunk = await shrinkImage(f, AVATAR_SHRINK);
-      if (shrunk !== f) {
-        setNote(`Resized ${formatBytes(f.size)} → ${formatBytes(shrunk.size)}`);
+      if (original && original.size !== shrunk.size) {
+        setNote(`${formatBytes(original.size)} → ${formatBytes(shrunk.size)}`);
       }
       onFile(shrunk);
     } catch (e) {
@@ -87,7 +100,7 @@ export function AvatarEditor({
             accept="image/*"
             hidden
             onChange={(e) => {
-              void take(e.target.files?.[0]);
+              take(e.target.files?.[0]);
               e.target.value = '';
             }}
           />
@@ -98,7 +111,7 @@ export function AvatarEditor({
             onClick={() => fileRef.current?.click()}
           >
             <Icon name="upload" size={15} />
-            {working ? 'Resizing…' : url ? 'Change picture' : 'Upload a picture'}
+            {working ? 'Saving…' : url ? 'Change picture' : 'Upload a picture'}
           </button>
           {url && (
             <button type="button" className="btn btn-sm btn-ghost" onClick={onRemove}>
@@ -107,10 +120,18 @@ export function AvatarEditor({
             </button>
           )}
           <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', maxWidth: 230, lineHeight: 1.45 }}>
-            {note || (url ? 'Shown everywhere instead of the emoji.' : 'Any size — it gets resized for you.')}
+            {note || (url ? 'Shown everywhere instead of the emoji.' : 'Any size — you crop it next.')}
           </div>
         </div>
       </div>
+
+      {cropping && (
+        <AvatarCropper
+          file={cropping}
+          onCancel={() => setCropping(null)}
+          onDone={(f) => void cropped(f)}
+        />
+      )}
 
       {error && <p className="err" style={{ marginTop: -8 }}>{error}</p>}
 

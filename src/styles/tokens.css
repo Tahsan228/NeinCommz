@@ -63,6 +63,13 @@
   --inset: inset 0 1px 3px rgba(0, 0, 0, 0.55),
            inset 0 -1px 0 rgba(255, 255, 255, 0.03);
 
+  /* Other people's message bubbles. Tokenised because they used to be
+     hard-coded dark, which on the light theme put dark text on a dark grey
+     bubble and made other people's messages unreadable. */
+  --bubble-them-top: #34343e;
+  --bubble-them-bottom: #2b2b34;
+  --bubble-them-ink: #f2f2f5;
+
   /* Gradients reused everywhere. */
   --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0));
   --panel-fill: linear-gradient(170deg, var(--panel-top), var(--panel-bottom));
@@ -102,6 +109,8 @@
   --control-hover-top: #364567;
   --control-hover-bottom: #29344e;
   --sunken: #0e1424;
+  --bubble-them-top: #2c3853;
+  --bubble-them-bottom: #232e46;
 }
 
 :root[data-theme='forest'] {
@@ -116,6 +125,8 @@
   --control-hover-top: #305039;
   --control-hover-bottom: #24402e;
   --sunken: #0a170f;
+  --bubble-them-top: #27412f;
+  --bubble-them-bottom: #1f3526;
 }
 
 :root[data-theme='plum'] {
@@ -130,6 +141,8 @@
   --control-hover-top: #4a3656;
   --control-hover-bottom: #372840;
   --sunken: #150d1a;
+  --bubble-them-top: #3b2b45;
+  --bubble-them-bottom: #2f2237;
 }
 
 :root[data-theme='paper'] {
@@ -161,6 +174,9 @@
             0 2px 6px rgba(0, 0, 0, 0.16),
             0 20px 50px rgba(0, 0, 0, 0.14);
   --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0));
+  --bubble-them-top: #ffffff;
+  --bubble-them-bottom: #e9e9ee;
+  --bubble-them-ink: #16161a;
 }
 
 /* Density: comfy vs compact chat. */

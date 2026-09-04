@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { SITE_PASSWORD } from '../../lib/supabase';
-import { Icon } from '../../components/Icon';
+import { LogoMark } from '../../components/Logo';
 
 /**
  * The front door. This is a curtain, not a lock: the comparison happens in the
@@ -38,7 +38,7 @@ export function SiteGate({ onPass }: { onPass: () => void }) {
     <div className="centered">
       <div className={`gate ${wrong ? 'shake' : ''}`}>
         <div className="gate-mark">
-          <Icon name="snowflake" size={32} strokeWidth={1.7} />
+          <LogoMark size={44} />
         </div>
         <h1>NeinCommz</h1>
         <p>Say the word.</p>
