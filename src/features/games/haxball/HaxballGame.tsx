@@ -1064,11 +1064,16 @@ function drawPitch(
 
   // Players.
   for (const pl of w.players) {
+    const name = isBot(pl.id) ? botName(pl.id) : profiles.get(pl.id)?.display_name;
+    const base = TEAM_COLOR[pl.team];
+
     ctx.beginPath();
     ctx.arc(pl.x, pl.y, PLAYER_R, 0, Math.PI * 2);
     const g = ctx.createRadialGradient(pl.x - 4, pl.y - 5, 2, pl.x, pl.y, PLAYER_R);
-    g.addColorStop(0, lighten(TEAM_COLOR[pl.team]));
-    g.addColorStop(1, TEAM_COLOR[pl.team]);
+    // Holding the kick key pales the disc, which is how you read intent from
+    // across the pitch without any text.
+    g.addColorStop(0, lighten(base, pl.kickHeld ? 130 : 60));
+    g.addColorStop(1, pl.kickHeld ? lighten(base, 80) : base);
     ctx.fillStyle = g;
     ctx.fill();
     ctx.lineWidth = pl.id === me ? 3 : 2;
@@ -1084,10 +1089,17 @@ function drawPitch(
       ctx.stroke();
     }
 
-    const name = isBot(pl.id) ? botName(pl.id) : profiles.get(pl.id)?.display_name;
+    // Initials inside the disc, so a crowded box is still readable when the
+    // names above everyone overlap.
+    ctx.font = '700 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = pl.kickHeld ? 'rgba(30,20,20,0.85)' : 'rgba(255,255,255,0.92)';
+    ctx.fillText(initials(name), pl.x, pl.y + 0.5);
+    ctx.textBaseline = 'alphabetic';
+
     if (name) {
       ctx.font = '600 11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.fillText(name, pl.x, pl.y - PLAYER_R - 9);
     }
@@ -1100,21 +1112,24 @@ function drawPitch(
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fill();
 
-  const owner = w.lastTouch ? profiles.get(w.lastTouch) : undefined;
+  // The ball wears YOUR design, not the last toucher's. A ball that changes
+  // appearance every time possession turns over is disorienting to follow.
   paintBall(
-    cosmetics && w.lastTouch ? cosmetics.equippedOf(w.lastTouch).ball : undefined,
+    cosmetics ? cosmetics.equippedOf(me).ball : undefined,
     ctx,
     w.ball.x,
     w.ball.y,
     BALL_R,
-    owner?.accent_color ?? '#e0574f',
+    profiles.get(me)?.accent_color ?? '#e0574f',
     w.tick,
   );
 
   if (w.countdown > 0) {
-    const secondsLeft = Math.ceil(w.countdown / 60);
-    // Pulse each digit as it lands, so the count reads even at a glance.
-    const within = 1 - ((w.countdown % 60) / 60);
+    // Snapshots arrive at 30Hz, so counting straight off the tick stutters.
+    // Smooth it against the wall clock between updates instead.
+    const smooth = smoothCountdown(w.countdown);
+    const secondsLeft = Math.ceil(smooth / 60);
+    const within = 1 - ((smooth % 60) / 60);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, p.w, p.h);
 
@@ -1241,6 +1256,30 @@ function letterbox(ctx: CanvasRenderingContext2D, w: World, amount: number): voi
   ctx.fillRect(0, w.pitch.h - bar, w.pitch.w, bar);
 }
 
+/** Lerp a snapshot pair, so slow motion stays smooth instead of stepping. */
+function blendInto(w: World, a: Snapshot, b: Snapshot, k: number): void {
+  applySnapshot(w, a);
+  const mix = (from: number, to: number) => from + (to - from) * k;
+
+  w.ball.x = mix(a.b[0], b.b[0]);
+  w.ball.y = mix(a.b[1], b.b[1]);
+
+  for (const player of w.players) {
+    const from = a.p.find((q) => q[0] === player.id);
+    const to = b.p.find((q) => q[0] === player.id);
+    if (!from || !to) continue;
+    player.x = mix(from[1], to[1]);
+    player.y = mix(from[2], to[2]);
+    player.charge = mix(from[6], to[6]);
+  }
+}
+
+/** Where the net is, which is where a goal effect should come from. */
+function goalMouth(w: World, side: 0 | 1): { x: number; y: number } {
+  const { left, right } = bounds(w.pitch);
+  return { x: side === 0 ? left : right, y: w.pitch.h / 2 };
+}
+
 function drawGoalSequence(
   ctx: CanvasRenderingContext2D,
   w: World,
@@ -1253,23 +1292,19 @@ function drawGoalSequence(
   const t = 1 - w.celebrating / tape.total;
   const goal = w.goal;
 
-  ctx.fillStyle = '#05060a';
-  ctx.fillRect(0, 0, p.w, p.h);
-
   const scorerId = goal?.scorer ?? w.lastTouch;
   const scorer = w.players.find((q) => q.id === scorerId);
   const focus = scorer ?? (goal ? { x: goal.x, y: goal.y } : null);
+  const net = goalMouth(w, goal?.side ?? 1);
 
   /* ------------------------------------------------ 1. hold on the scorer */
   if (t < MOMENT_END) {
     const local = t / MOMENT_END;
-    // Push in over the first second or so, then simply stay there.
     const zoom = 1 + 1.15 * easeOut(local / 0.45);
 
     withCamera(ctx, w, focus, zoom, () => {
       drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
 
-      // A ring around whoever did it, so the eye lands on them immediately.
       if (scorer) {
         const pulse = 1 + Math.sin(local * 14) * 0.08;
         ctx.beginPath();
@@ -1278,49 +1313,77 @@ function drawGoalSequence(
         ctx.lineWidth = 3.5;
         ctx.stroke();
       }
-    });
 
-    // The goal effect plays over the top, in screen space, so a zoomed camera
-    // does not throw confetti off the edges.
-    if (goal && scorerId) {
-      paintGoalEffect(
-        cosmetics.equippedOf(scorerId).goalfx,
-        ctx,
-        p.w,
-        p.h,
-        Math.min(1, local / 0.8),
-        (profiles.get(scorerId)?.accent_color ?? TEAM_COLOR[goal.team]),
-      );
-    }
+      // The effect erupts from the net, in world space, so it stays anchored
+      // to the goal as the camera moves.
+      if (scorerId) {
+        paintGoalEffect(
+          cosmetics.equippedOf(scorerId).goalfx,
+          ctx,
+          p.w,
+          p.h,
+          Math.min(1, local / 0.8),
+          profiles.get(scorerId)?.accent_color ?? TEAM_COLOR[goal?.team ?? 0],
+          net.x,
+          net.y,
+        );
+      }
+
+      // The celebration pops out of the player who scored, not from under a
+      // banner at the bottom of the screen.
+      const shout = scorerId ? celebrationText(cosmetics.equippedOf(scorerId).celebration) : '';
+      if (shout && scorer && !goal?.ownGoal) {
+        const pop = easeOut((local - 0.12) / 0.28);
+        if (pop > 0) {
+          ctx.save();
+          ctx.translate(scorer.x, scorer.y - PLAYER_R - 18);
+          ctx.scale(pop, pop);
+          ctx.globalAlpha = Math.min(1, pop);
+
+          ctx.font = '800 15px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          const width = ctx.measureText(shout).width + 20;
+
+          ctx.beginPath();
+          ctx.roundRect(-width / 2, -17, width, 24, 12);
+          ctx.fillStyle = TEAM_COLOR[scorer.team];
+          ctx.fill();
+          // A little tail, so it reads as coming out of the player.
+          ctx.beginPath();
+          ctx.moveTo(-5, 6);
+          ctx.lineTo(0, 13);
+          ctx.lineTo(5, 6);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(shout, 0, 0);
+          ctx.restore();
+        }
+      }
+    });
 
     letterbox(ctx, w, local / 0.35);
 
-    // Titles slide up from under the lower bar.
+    // Titles live inside the bars, where they cannot cover the player.
     const rise = easeOut((local - 0.15) / 0.35);
     if (rise > 0) {
+      const bar = p.h * 0.12;
       ctx.save();
       ctx.globalAlpha = Math.min(1, rise);
       ctx.textAlign = 'center';
 
-      ctx.font = '800 40px system-ui, sans-serif';
+      ctx.font = '800 26px system-ui, sans-serif';
       ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
-      ctx.fillText('GOAL', p.w / 2, p.h * 0.44 + (1 - rise) * 24);
+      ctx.fillText('GOAL', p.w / 2, bar * 0.68 - (1 - rise) * 14);
 
-      ctx.font = '700 26px system-ui, sans-serif';
+      ctx.font = '700 18px system-ui, sans-serif';
       ctx.fillStyle = '#ffffff';
       const who = nameFor(scorerId, profiles);
       ctx.fillText(
         goal?.ownGoal ? `${who} — own goal` : `${who} scored`,
         p.w / 2,
-        p.h * 0.53 + (1 - rise) * 24,
+        p.h - bar * 0.38 + (1 - rise) * 14,
       );
-
-      const shout = scorerId ? celebrationText(cosmetics.equippedOf(scorerId).celebration) : '';
-      if (shout && !goal?.ownGoal) {
-        ctx.font = '700 19px system-ui, sans-serif';
-        ctx.fillStyle = 'rgba(255,255,255,0.72)';
-        ctx.fillText(shout, p.w / 2, p.h * 0.6 + (1 - rise) * 24);
-      }
       ctx.restore();
     }
     return;
@@ -1331,67 +1394,76 @@ function drawGoalSequence(
     const local = (t - MOMENT_END) / (REPLAY_END - MOMENT_END);
     const clip = tape.clip;
 
-    // Where in the clip the shot itself happened.
     let shotIndex = clip.length - 1;
     if (goal) {
       const found = clip.findIndex((f) => f.t >= goal.shotTick);
       if (found >= 0) shotIndex = found;
     }
 
-    const frame = Math.round(replayFrame(local, clip.length, shotIndex));
+    // A float index, blended between neighbours — stepping whole frames at a
+    // third of speed is what made the slow motion judder.
+    const exact = replayFrame(local, clip.length, shotIndex);
+    const i = Math.min(clip.length - 2, Math.max(0, Math.floor(exact)));
     const rw = tape.replayWorld;
-    applySnapshot(rw, clip[Math.min(clip.length - 1, Math.max(0, frame))]);
+    blendInto(rw, clip[i], clip[i + 1], exact - i);
     rw.celebrating = 0;
     rw.countdown = 0;
     rw.goal = null;
 
-    drawPitch(ctx, rw, me, profiles, { trail: [], equippedOf: cosmetics.equippedOf, celebrateTotal: 0 });
+    // The camera follows the ball through the move, easing in from the wide
+    // shot so the cut out of the celebration is not a jolt.
+    const track = easeOut(local / 0.18);
+    const zoom = 1 + 0.55 * track;
+    withCamera(ctx, w, { x: rw.ball.x, y: rw.ball.y }, zoom, () => {
+      drawPitch(ctx, rw, me, profiles, {
+        trail: [],
+        equippedOf: cosmetics.equippedOf,
+        celebrateTotal: 0,
+      });
+    });
 
     letterbox(ctx, w, 1);
     drawReplayBadge(ctx, p.w, local);
 
-    // Who did it, along the bottom bar where a broadcast would put it.
+    const bar = p.h * 0.12;
     ctx.save();
     ctx.textAlign = 'left';
-    const barY = p.h - p.h * 0.12 * 0.5 + 5;
-
     ctx.font = '700 15px system-ui, sans-serif';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(nameFor(scorerId, profiles), 18, barY);
+    ctx.fillText(nameFor(scorerId, profiles), 18, p.h - bar * 0.38);
 
     if (goal?.assist) {
       ctx.font = '600 13px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18 + ctx.measureText('').width + 150, barY);
+      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18, p.h - bar * 0.38 + 17);
     }
 
     ctx.textAlign = 'right';
-    ctx.font = '700 15px system-ui, sans-serif';
+    ctx.font = '700 16px system-ui, sans-serif';
     ctx.fillStyle = TEAM_COLOR[0];
-    ctx.fillText(String(w.score.red), p.w - 44, barY);
+    ctx.fillText(String(w.score.red), p.w - 46, p.h - bar * 0.38);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('–', p.w - 30, barY);
+    ctx.fillText('–', p.w - 32, p.h - bar * 0.38);
     ctx.fillStyle = TEAM_COLOR[1];
-    ctx.fillText(String(w.score.blue), p.w - 16, barY);
+    ctx.fillText(String(w.score.blue), p.w - 16, p.h - bar * 0.38);
     ctx.restore();
 
-    // The slow section gets a marker, so the crawl reads as deliberate.
     if (local > 0.5 && local < 0.82) {
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = '700 12px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.fillText('SLOW MOTION', p.w / 2, p.h * 0.12 * 0.5 + 4);
+      ctx.fillText('SLOW MOTION', p.w / 2, bar * 0.62);
       ctx.restore();
     }
     return;
   }
 
-  /* ---------------------------------------------------- 3. fade to restart */
+  /* ------------------------------------------- 3. back to a live wide shot */
+  // No dimming here: the pitch stays bright right up to the restart, and the
+  // only darkening in the whole game belongs to the countdown.
   const local = (t - REPLAY_END) / (1 - REPLAY_END);
   drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
-  ctx.fillStyle = `rgba(5, 6, 10, ${0.25 + 0.35 * easeOut(local)})`;
-  ctx.fillRect(0, 0, p.w, p.h);
   letterbox(ctx, w, 1 - local);
 }
 
@@ -1425,10 +1497,40 @@ function drawReplayBadge(ctx: CanvasRenderingContext2D, width: number, progress:
   ctx.restore();
 }
 
-function lighten(hex: string): string {
+function lighten(hex: string, by = 60): string {
   const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, ((n >> 16) & 255) + 60);
-  const g = Math.min(255, ((n >> 8) & 255) + 60);
-  const b = Math.min(255, (n & 255) + 60);
+  const r = Math.min(255, ((n >> 16) & 255) + by);
+  const g = Math.min(255, ((n >> 8) & 255) + by);
+  const b = Math.min(255, (n & 255) + by);
   return `rgb(${r},${g},${b})`;
+}
+
+/** Up to two letters from a name, for the middle of a player disc. */
+function initials(name: string | undefined): string {
+  if (!name) return '?';
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+/**
+ * A countdown that ticks evenly however often the number arrives.
+ *
+ * The host counts at 60Hz but broadcasts at 30, so a client reading the raw
+ * value redraws the same number twice then jumps two. Interpolating against
+ * the wall clock between updates removes the stutter without pretending to
+ * know anything the host has not said.
+ */
+let lastCountdown = { value: -1, at: 0 };
+
+function smoothCountdown(ticks: number): number {
+  const now = performance.now();
+  if (ticks !== lastCountdown.value) {
+    lastCountdown = { value: ticks, at: now };
+    return ticks;
+  }
+  // 60 ticks a second, and never run past the value we were last told.
+  const elapsed = ((now - lastCountdown.at) / 1000) * 60;
+  return Math.max(0, ticks - Math.min(elapsed, 2));
 }

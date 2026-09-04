@@ -212,6 +212,9 @@ type FxPainter = (
   /** 0 at the moment of the goal, 1 when the celebration ends. */
   t: number,
   accent: string,
+  /** Where the goal actually went in, so the effect erupts from the net. */
+  ox: number,
+  oy: number,
 ) => void;
 
 /** Deterministic pseudo-random, so every client draws the same burst. */
@@ -223,38 +226,42 @@ function rand(i: number): number {
 const EFFECTS: Record<string, FxPainter> = {
   fx_none: () => {},
 
-  fx_confetti: (ctx, w, h, t) => {
-    for (let i = 0; i < 90; i++) {
-      const x = rand(i) * w;
-      const y = (rand(i + 99) + t * 1.5) * h - h * 0.2;
-      if (y < 0 || y > h) continue;
+  fx_confetti: (ctx, w, h, t, _accent, ox, oy) => {
+    // Thrown out of the net, then falling.
+    for (let i = 0; i < 110; i++) {
+      const a = rand(i) * Math.PI * 2;
+      const speed = 60 + rand(i + 21) * 320;
+      const x = ox + Math.cos(a) * speed * t;
+      const y = oy + Math.sin(a) * speed * t + t * t * 420;
+      if (y < -20 || y > h + 20 || x < -20 || x > w + 20) continue;
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(rand(i + 7) * 6 + t * 8);
       ctx.fillStyle = `hsl(${Math.floor(rand(i + 3) * 360)} 85% 62%)`;
+      ctx.globalAlpha = Math.max(0, 1 - t);
       ctx.fillRect(-3, -6, 6, 12);
       ctx.restore();
     }
   },
 
-  fx_shockwave: (ctx, w, h, t, accent) => {
+  fx_shockwave: (ctx, w, _h, t, accent, ox, oy) => {
     for (const delay of [0, 0.18, 0.36]) {
       const p = t - delay;
       if (p <= 0 || p > 1) continue;
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2, p * w * 0.7, 0, Math.PI * 2);
+      ctx.arc(ox, oy, p * w * 0.7, 0, Math.PI * 2);
       ctx.strokeStyle = withAlpha(accent, (1 - p) * 0.8);
       ctx.lineWidth = 8 * (1 - p);
       ctx.stroke();
     }
   },
 
-  fx_fireworks: (ctx, w, h, t) => {
+  fx_fireworks: (ctx, _w, _h, t, _accent, ox, oy) => {
     for (let s = 0; s < 3; s++) {
       const p = t - s * 0.22;
       if (p <= 0 || p > 1) continue;
-      const cx = w * (0.25 + s * 0.25);
-      const cy = h * (0.3 + rand(s) * 0.2);
+      const cx = ox + (rand(s) - 0.5) * 180;
+      const cy = oy + (rand(s + 11) - 0.5) * 120;
       for (let i = 0; i < 26; i++) {
         const a = (i / 26) * Math.PI * 2;
         const r = p * 110;
@@ -281,9 +288,9 @@ const EFFECTS: Record<string, FxPainter> = {
     }
   },
 
-  fx_blackhole: (ctx, w, h, t) => {
-    const cx = w / 2;
-    const cy = h / 2;
+  fx_blackhole: (ctx, w, h, t, _accent, ox, oy) => {
+    const cx = ox;
+    const cy = oy;
     const pull = Math.sin(t * Math.PI);
     for (let i = 0; i < 70; i++) {
       const a = rand(i) * Math.PI * 2 + t * 3;
@@ -300,16 +307,16 @@ const EFFECTS: Record<string, FxPainter> = {
     ctx.fillRect(0, 0, w, h);
   },
 
-  fx_earthquake: (ctx, w, h, t) => {
-    // Cracks spreading from the centre and widening as they go.
+  fx_earthquake: (ctx, _w, _h, t, _accent, ox, oy) => {
+    // Cracks spreading from the net and widening as they go.
     const spread = Math.sin(t * Math.PI);
     ctx.strokeStyle = withAlpha('#14100c', 0.75 * spread);
     for (let i = 0; i < 7; i++) {
       const a = (i / 7) * Math.PI * 2 + rand(i);
       ctx.beginPath();
-      ctx.moveTo(w / 2, h / 2);
-      let x = w / 2;
-      let y = h / 2;
+      ctx.moveTo(ox, oy);
+      let x = ox;
+      let y = oy;
       for (let k = 1; k <= 5; k++) {
         x += Math.cos(a + (rand(i * 5 + k) - 0.5)) * (t * 60);
         y += Math.sin(a + (rand(i * 5 + k) - 0.5)) * (t * 60);
@@ -320,10 +327,10 @@ const EFFECTS: Record<string, FxPainter> = {
     }
   },
 
-  fx_meteor: (ctx, w, h, t) => {
+  fx_meteor: (ctx, w, _h, t, _accent, ox, oy) => {
     const fall = Math.min(1, t / 0.45);
-    const x = w * 0.5;
-    const y = h * 0.5;
+    const x = ox;
+    const y = oy;
 
     if (fall < 1) {
       const fx = x - 260 * (1 - fall);
@@ -364,10 +371,10 @@ const EFFECTS: Record<string, FxPainter> = {
     }
   },
 
-  fx_supernova: (ctx, w, h, t) => {
+  fx_supernova: (ctx, w, h, t, _accent, ox, oy) => {
     // Builds to a whiteout, then falls away again.
     const flash = t < 0.35 ? t / 0.35 : Math.max(0, 1 - (t - 0.35) / 0.65);
-    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.75);
+    const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, w * 0.75);
     g.addColorStop(0, withAlpha('#ffffff', flash));
     g.addColorStop(0.35, withAlpha('#ffdc96', flash * 0.8));
     g.addColorStop(1, withAlpha('#ffb450', 0));
@@ -378,8 +385,8 @@ const EFFECTS: Record<string, FxPainter> = {
       const a = (i / 40) * Math.PI * 2;
       const r = t * w * 0.7;
       ctx.beginPath();
-      ctx.moveTo(w / 2 + Math.cos(a) * r * 0.7, h / 2 + Math.sin(a) * r * 0.7);
-      ctx.lineTo(w / 2 + Math.cos(a) * r, h / 2 + Math.sin(a) * r);
+      ctx.moveTo(ox + Math.cos(a) * r * 0.7, oy + Math.sin(a) * r * 0.7);
+      ctx.lineTo(ox + Math.cos(a) * r, oy + Math.sin(a) * r);
       ctx.strokeStyle = withAlpha('#fff0c8', (1 - t) * 0.8);
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -412,8 +419,19 @@ export function paintGoalEffect(
   h: number,
   t: number,
   accent: string,
+  /** Where it went in. Defaults to the middle for previews. */
+  ox = w / 2,
+  oy = h / 2,
 ): void {
-  (EFFECTS[id ?? 'fx_none'] ?? EFFECTS.fx_none)(ctx, w, h, Math.min(1, Math.max(0, t)), accent);
+  (EFFECTS[id ?? 'fx_none'] ?? EFFECTS.fx_none)(
+    ctx,
+    w,
+    h,
+    Math.min(1, Math.max(0, t)),
+    accent,
+    ox,
+    oy,
+  );
 }
 
 /* ----------------------------------------------------------- celebrations */

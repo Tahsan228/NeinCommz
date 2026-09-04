@@ -153,8 +153,10 @@ card also shows what is next and when, which is the part that actually helps you
 find a moment to talk.
 
 ### Games
-All three share one lobby: create a room, invite people from the list, invites
-arrive as a toast. Any room can be **left** (it stays open for everyone else) and
+All games share one lobby: create a room, invite people from the list, invites
+arrive as a toast. If a host closes the tab, the room passes to whoever has
+been in it longest rather than stranding everyone — and clears itself away if
+they have all gone. Any room can be **left** (it stays open for everyone else) and
 the host can **cancel** it outright, which ends it for everyone after one
 confirmation. Gartic offers **Start anyway** below its recommended player count,
 since two people still works — the chains are just shorter.
@@ -185,9 +187,13 @@ since two people still works — the chains are just shorter.
   the net is deep, and the ball is large enough to see. Players start in a
   lobby and pick Red, Blue or the bench; the host sets team size, pitch size,
   player speed, shot power, charge rate, ball drag, goal limit and match length,
-  then starts the match. Shots are **charged** — hold the kick key to build
-  power, with a dotted aim guide and a power meter — and a **best-of series**
-  tracks match wins. The host runs a 60 Hz physics loop and broadcasts
+  then starts the match. Power comes from **keeping the ball at your
+  feet**, not from holding a key: walking it forward winds up a shot, losing it
+  drops everything you had, and the kick key fires the moment there is anything
+  to hit — so you can run at a loose ball with it held and strike on contact.
+  Even a bare touch sends the ball a long way. Holding the key pales your disc,
+  the way it does in the original, and discs carry initials so a crowded box
+  stays readable. A **best-of series** tracks match wins. The host runs a 60 Hz physics loop and broadcasts
   snapshots at 30 Hz over Supabase Realtime; everyone else sends key state.
   A goal is a short film rather than a banner: the camera pushes in on whoever
   scored and holds there with their name and celebration behind letterbox bars,
@@ -295,7 +301,7 @@ glow behind the page.
 npm test
 ```
 
-223 tests covering the parts where bugs actually hide: the status engine's
+235 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
@@ -305,7 +311,8 @@ whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
 stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
 against itself; a Haxball bot must never kick towards its own goal), the
 leaderboard's ordering and its rule that nobody is ever dropped from the table,
-who gets credited with a goal and an assist, and two jsdom tests — one that mounts the whole app and walks through
+who gets credited with a goal and an assist, what happens to a room when its
+host closes the tab (exactly one client may act on it), and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 

@@ -16,10 +16,11 @@ import {
   mySessions,
 } from './lobby';
 import { GameOverlay } from './GameOverlay';
+import { hostAction } from './hostWatch';
 
 export function GamesPanel() {
   const { profile } = useSession();
-  const { byId } = useDirectory();
+  const { byId, presence } = useDirectory();
   const { push } = useToasts();
 
   const [sessions, setSessions] = useState<GameSession[]>([]);
@@ -149,6 +150,53 @@ export function GamesPanel() {
       void supabase.removeChannel(ch);
     };
   }, [me, push]);
+
+  /* -------------------------------------------------- the host walked off -- */
+  // A host who closes the tab leaves a room nobody can start. Give it to
+  // whoever has been in it longest, or clear it away if they all left.
+  useEffect(() => {
+    if (!me || sessions.length === 0) return;
+
+    const check = async () => {
+      const { data } = await supabase
+        .from('game_players')
+        .select('session_id, profile_id, seat')
+        .in('session_id', sessions.map((s) => s.id));
+
+      const rows = (data as { session_id: UUID; profile_id: UUID; seat: number }[]) ?? [];
+
+      for (const session of sessions) {
+        const players = rows.filter((r) => r.session_id === session.id);
+        const action = hostAction({
+          session,
+          players,
+          presence,
+          me,
+        });
+
+        if (action.kind === 'promote') {
+          await supabase
+            .from('game_sessions')
+            .update({ host_id: action.to })
+            .eq('id', session.id)
+            // Only rewrite it if nobody beat us to it.
+            .eq('host_id', session.host_id);
+          push({
+            icon: 'users',
+            title: 'You are running this room now',
+            sub: `${byId.get(session.host_id)?.display_name ?? 'The host'} left.`,
+          });
+        } else if (action.kind === 'close') {
+          await supabase.from('game_sessions').delete().eq('id', session.id);
+        }
+      }
+    };
+
+    // Presence takes a few seconds to settle after a tab closes, so this runs
+    // on a slow timer rather than the instant somebody drops.
+    const id = window.setInterval(() => void check(), 6000);
+    return () => window.clearInterval(id);
+  }, [me, sessions, presence, byId, push]);
 
   /* ------------------------------------------------------------ actions -- */
   const startGame = async (game: GameId) => {

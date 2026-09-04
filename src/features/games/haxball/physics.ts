@@ -66,9 +66,12 @@ export const DEFAULT_RULES: Rules = {
   playerAccel: 0.14,
   playerDamping: 0.935,
   ballDamping: 0.99,
-  kickMin: 1.6,
-  kickMax: 6,
-  chargeRate: 0.022,
+  // A bare touch already sends the ball a long way — power is a bonus for
+  // shepherding it, not the difference between a kick and a nudge.
+  kickMin: 4.2,
+  kickMax: 9,
+  // Contact is brief, so power has to build quickly to be worth anything.
+  chargeRate: 0.045,
   maxBallSpeed: 18,
   scoreLimit: 5,
   timeLimitSec: 300,
@@ -88,12 +91,12 @@ export const SPEED_PRESETS: Record<string, number> = {
   Fastest: 0.26,
 };
 
-/** Likewise: the old "Gentle" is the sensible default. */
+/** The ceiling a fully-wound shot reaches. The floor is set by kickMin. */
 export const POWER_PRESETS: Record<string, number> = {
-  Softer: 4,
-  Normal: 6,
-  Harder: 9.5,
-  Cannon: 13,
+  Softer: 6,
+  Normal: 9,
+  Harder: 12,
+  Cannon: 16,
 };
 
 export const KICK_RANGE = 8;
@@ -115,8 +118,9 @@ export interface HaxPlayer extends Disc {
   team: 0 | 1;
   /** Frames of kick cooldown remaining, so a held key cannot machine-gun. */
   cooldown: number;
-  /** 0..1 shot power, built while the kick key is held. */
+  /** 0..1 shot power, built by keeping the ball at your feet. */
   charge: number;
+  /** True while the kick key is down, which is what lightens the disc. */
   kickHeld: boolean;
   /** Unit vector the next shot would travel along, for the aim guide. */
   aimX: number;
@@ -170,6 +174,8 @@ export interface Touch {
 }
 
 export interface GoalInfo {
+  /** Which end it went in: 0 = the left goal, 1 = the right one. */
+  side: 0 | 1;
   /** Who put it in — which may be someone who put it in their own net. */
   scorer: string | null;
   /** The team credited with the goal. */
@@ -353,21 +359,20 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
     const inReach = d > 0 && d < p.r + w.ball.r + KICK_RANGE;
 
-    if (inp.kick) {
-      // Power only builds while the ball is actually within reach, so holding
-      // the key across the pitch neither charges nor draws an aim guide.
-      p.kickHeld = true;
-      p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + r.chargeRate) : 0;
-    } else if (p.kickHeld) {
-      p.kickHeld = false;
+    // Power comes from keeping the ball at your feet, not from holding a key.
+    // Walking it forward winds up a shot; losing it drops everything you had.
+    p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + r.chargeRate) : 0;
+
+    // The key is intent, and it fires the moment there is something to hit —
+    // so you can run at a loose ball with it held and strike on contact.
+    p.kickHeld = inp.kick;
+    if (inp.kick && inReach && p.cooldown === 0) {
       const power = r.kickMin + p.charge * (r.kickMax - r.kickMin);
+      w.ball.vx += p.aimX * power;
+      w.ball.vy += p.aimY * power;
       p.charge = 0;
-      if (p.cooldown === 0 && inReach) {
-        w.ball.vx += p.aimX * power;
-        w.ball.vy += p.aimY * power;
-        p.cooldown = KICK_COOLDOWN;
-        noteTouch(w, p);
-      }
+      p.cooldown = KICK_COOLDOWN;
+      noteTouch(w, p);
     }
   }
 
@@ -445,6 +450,8 @@ export function describeGoal(w: World, team: 0 | 1): GoalInfo {
   }
 
   return {
+    // Red attacks right, so a goal for red went in at the right-hand end.
+    side: team === 0 ? 1 : 0,
     scorer: last?.id ?? null,
     team,
     assist,
@@ -578,8 +585,8 @@ export function confineBall(b: Disc, pitch: Pitch = PITCH): 0 | 1 | null {
 export interface Snapshot {
   t: number;
   b: [number, number, number, number];
-  /** id, x, y, vx, vy, team, charge, aimX, aimY */
-  p: [string, number, number, number, number, number, number, number, number][];
+  /** id, x, y, vx, vy, team, charge, aimX, aimY, kickHeld */
+  p: [string, number, number, number, number, number, number, number, number, number][];
   s: [number, number];
   c: number;
   /** countdown ticks remaining */
@@ -607,6 +614,7 @@ export function snapshot(w: World): Snapshot {
       round(p.charge),
       round(p.aimX),
       round(p.aimY),
+      p.kickHeld ? 1 : 0,
     ]) as Snapshot['p'],
     s: [w.score.red, w.score.blue],
     c: w.celebrating,
@@ -634,7 +642,7 @@ export function applySnapshot(w: World, s: Snapshot): void {
   w.winner = s.w === -1 ? null : (s.w as 0 | 1);
 
   const seen = new Set<string>();
-  for (const [id, x, y, vx, vy, team, charge, aimX, aimY] of s.p) {
+  for (const [id, x, y, vx, vy, team, charge, aimX, aimY, held] of s.p) {
     seen.add(id);
     let p = w.players.find((q) => q.id === id);
     if (!p) {
@@ -663,6 +671,7 @@ export function applySnapshot(w: World, s: Snapshot): void {
     p.charge = charge;
     p.aimX = aimX;
     p.aimY = aimY;
+    p.kickHeld = held === 1;
   }
   w.players = w.players.filter((p) => seen.has(p.id));
 }

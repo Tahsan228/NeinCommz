@@ -39,55 +39,85 @@ function nearBall() {
   return w;
 }
 
-describe('charged shots', () => {
-  it('builds charge while the kick key is held, without touching the ball', () => {
+describe('kicking', () => {
+  it('builds power just by keeping the ball at your feet, with no key held', () => {
     const w = nearBall();
-    for (let i = 0; i < 10; i++) step(w, new Map([['a', HOLD]]));
+    for (let i = 0; i < 10; i++) step(w, new Map([['a', RELEASE]]));
     expect(w.players[0].charge).toBeGreaterThan(0);
-    expect(w.players[0].charge).toBeLessThanOrEqual(1);
-    // The shot goes out on release, so nothing has moved yet.
+    // Nothing has been struck: power is stored, not spent.
     expect(Math.abs(w.ball.vx)).toBeLessThan(0.01);
   });
 
-  it('caps the charge at full power however long you hold', () => {
+  it('caps at full power however long the ball stays there', () => {
     const w = nearBall();
-    for (let i = 0; i < 600; i++) step(w, new Map([['a', HOLD]]));
+    for (let i = 0; i < 600; i++) step(w, new Map([['a', RELEASE]]));
     expect(w.players[0].charge).toBe(1);
   });
 
-  it('kicks harder the longer it was charged', () => {
-    const tap = nearBall();
-    step(tap, new Map([['a', HOLD]]));
-    step(tap, new Map([['a', RELEASE]]));
-
-    const full = nearBall();
-    for (let i = 0; i < 60; i++) step(full, new Map([['a', HOLD]]));
-    step(full, new Map([['a', RELEASE]]));
-
-    expect(tap.ball.vx).toBeGreaterThan(0);
-    expect(full.ball.vx).toBeGreaterThan(tap.ball.vx * 2);
-  });
-
-  it('resets the charge once the shot is away', () => {
+  it('loses the wind-up the moment the ball gets away', () => {
     const w = nearBall();
-    for (let i = 0; i < 30; i++) step(w, new Map([['a', HOLD]]));
+    for (let i = 0; i < 20; i++) step(w, new Map([['a', RELEASE]]));
+    expect(w.players[0].charge).toBeGreaterThan(0);
+
+    w.players[0].x = 60;
+    w.players[0].y = 60;
     step(w, new Map([['a', RELEASE]]));
     expect(w.players[0].charge).toBe(0);
   });
 
-  it('does nothing on release when the ball is out of reach', () => {
+  it('sends the ball a long way even off a bare touch', () => {
+    const w = nearBall();
+    step(w, new Map([['a', HOLD]]));
+    // Not a nudge: an uncharged kick is most of a real one.
+    expect(w.ball.vx).toBeGreaterThan(4);
+  });
+
+  it('hits harder after winding up', () => {
+    const tap = nearBall();
+    step(tap, new Map([['a', HOLD]]));
+
+    const wound = nearBall();
+    for (let i = 0; i < 40; i++) step(wound, new Map([['a', RELEASE]]));
+    step(wound, new Map([['a', HOLD]]));
+
+    expect(wound.ball.vx).toBeGreaterThan(tap.ball.vx * 1.6);
+  });
+
+  it('fires on contact when the key is already down', () => {
+    // Running at a loose ball with the key held should strike immediately
+    // rather than waiting for a fresh press.
+    const w = nearBall();
+    step(w, new Map([['a', HOLD]]));
+    expect(w.ball.vx).toBeGreaterThan(0);
+  });
+
+  it('spends the wind-up on the shot', () => {
+    const w = nearBall();
+    for (let i = 0; i < 30; i++) step(w, new Map([['a', RELEASE]]));
+    step(w, new Map([['a', HOLD]]));
+    expect(w.players[0].charge).toBe(0);
+  });
+
+  it('reports the key being held, which is what lightens the disc', () => {
+    const w = nearBall();
+    step(w, new Map([['a', HOLD]]));
+    expect(w.players[0].kickHeld).toBe(true);
+    step(w, new Map([['a', RELEASE]]));
+    expect(w.players[0].kickHeld).toBe(false);
+  });
+
+  it('does nothing at all with the ball out of reach', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
     w.players[0].x = 60;
     w.players[0].y = 60;
     for (let i = 0; i < 40; i++) step(w, new Map([['a', HOLD]]));
-    step(w, new Map([['a', RELEASE]]));
     expect(Math.hypot(w.ball.vx, w.ball.vy)).toBeLessThan(0.01);
+    expect(w.players[0].charge).toBe(0);
   });
 
   it('aims from the player through the ball, which is what the guide draws', () => {
     const w = nearBall();
-    step(w, new Map([['a', HOLD]]));
-    // The player sits directly left of the ball, so the shot travels right.
+    step(w, new Map([['a', RELEASE]]));
     expect(w.players[0].aimX).toBeCloseTo(1, 2);
     expect(w.players[0].aimY).toBeCloseTo(0, 2);
   });
