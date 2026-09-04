@@ -10,7 +10,15 @@ export const supabase: SupabaseClient = createClient(
   url || 'https://placeholder.supabase.co',
   key || 'placeholder-anon-key',
   {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    auth: {
+      // Sessions live in memory only, so closing or reloading the page signs
+      // you out and the profile password is asked for again. That is the
+      // point: this runs on shared school computers, where a session that
+      // survives a refresh is a session the next person inherits.
+      persistSession: false,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
     realtime: { params: { eventsPerSecond: 40 } },
   },
 );

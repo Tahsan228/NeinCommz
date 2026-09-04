@@ -40,7 +40,7 @@ export const GAMES: GameMeta[] = [
   {
     id: 'chess',
     name: 'Chess',
-    icon: 'grid',
+    icon: 'chess',
     blurb: 'Or play the computer',
     min: 2,
     // Chess is the one game you can open alone, because it ships an opponent.

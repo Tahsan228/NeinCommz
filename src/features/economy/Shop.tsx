@@ -60,7 +60,7 @@ export function Shop({ onClose }: { onClose: () => void }) {
         <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
           Shop
           <span className="coin-pill">
-            <Icon name="circle" size={13} />
+            <Icon name="coin" size={14} />
             {profile.coins.toLocaleString()}
           </span>
         </span>
@@ -129,7 +129,7 @@ export function Shop({ onClose }: { onClose: () => void }) {
                   'Equip'
                 ) : affordable ? (
                   <>
-                    <Icon name="circle" size={13} />
+                    <Icon name="coin" size={14} />
                     {item.price}
                   </>
                 ) : (

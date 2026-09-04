@@ -184,18 +184,28 @@ export function Dashboard() {
             <div className="dash-sub">{weather.place}</div>
           </>
         ) : weatherState === 'loading' ? (
-          <div className="dash-sub">Checking the sky…</div>
-        ) : weatherState === 'denied' ? (
-          <div className="dash-sub">Location declined — no weather, everything else still works.</div>
-        ) : weatherState === 'failed' ? (
-          <button className="btn btn-sm" onClick={askForLocation}>
-            Weather unavailable — retry
-          </button>
+          <>
+            <div className="dash-label">Weather</div>
+            <div className="dash-sub">Checking the sky…</div>
+          </>
         ) : (
-          <button className="btn btn-sm" onClick={askForLocation}>
-            <Icon name="snowflake" size={14} />
-            Show local weather
-          </button>
+          // A quiet inline prompt rather than a button: this card sits beside
+          // three others that are pure information, and a solid control here
+          // pulled the eye straight to the least important thing on the panel.
+          <>
+            <div className="dash-label">Weather</div>
+            <button className="dash-link" onClick={askForLocation}>
+              <Icon name="pin" size={13} />
+              {weatherState === 'denied'
+                ? 'Location off — tap to allow'
+                : weatherState === 'failed'
+                  ? 'Unavailable — try again'
+                  : 'Use my location'}
+            </button>
+            {weatherState === 'denied' && (
+              <div className="dash-sub">Everything else works without it.</div>
+            )}
+          </>
         )}
       </div>
 

@@ -88,9 +88,11 @@ the browser, so anyone who opens devtools can walk straight past it. It exists
 so the page is not casually stumbled into. Do not treat it as protection.
 
 It is asked for on **every** load — a reload, a new tab, coming back tomorrow.
-Nothing about passing it is stored anywhere, so being signed in does not skip
-it: the profile session survives a reload, the front door deliberately does
-not.
+
+**Profile sessions are not persisted either.** Reloading the page signs you out
+and asks for the profile password again. That is deliberate: this is built for
+shared school computers, where a session that survives a refresh is a session
+the next person at that machine inherits.
 
 **Profile passwords are real.** Each profile is a genuine Supabase Auth account.
 Every table is behind row-level security that requires a logged-in session, so
@@ -224,9 +226,15 @@ the pitch shouts afterwards. Everyone starts with the free defaults and 250
 coins. Shop cards animate a live preview, because a trail is only a trail once
 it is moving.
 
-**Leaderboards** filter by game and by today / this week / this month / all
-time. The windowed views are rebuilt from per-match rows, since aggregate stats
-carry no dates.
+**Leaderboards** sit on the page rather than behind a button: a compact top
+five in the side column, with the full table a click away. Both filter by game
+and by today / this week / this month / all time — the windowed views are
+rebuilt from per-match rows, since aggregate stats carry no dates.
+
+Everyone appears on the board whether or not they have played, at zero. An
+empty panel saying "nothing recorded" tells you less than a list of zeroes,
+which at least shows who is here and makes the first result feel like it moved
+something.
 
 None of this is client-trusted: ratings, payouts and purchases all run through
 security-definer functions in the database, and awarding one session twice is
@@ -276,7 +284,7 @@ glow behind the page.
 npm test
 ```
 
-196 tests covering the parts where bugs actually hide: the status engine's
+213 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
@@ -284,8 +292,9 @@ configurable rounds, Haxball's collisions, goal maths, charged shots and match
 limits, Elo expectation/symmetry and the coin payouts, URL detection in messages, the
 whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
 stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
-against itself; a Haxball bot must never kick towards its own goal), and two
-jsdom tests — one that mounts the whole app and walks through
+against itself; a Haxball bot must never kick towards its own goal), the
+leaderboard's ordering and its rule that nobody is ever dropped from the table,
+and two jsdom tests — one that mounts the whole app and walks through
 the front door, and one pinning the game-room loading contract that once made
 every game unopenable.
 

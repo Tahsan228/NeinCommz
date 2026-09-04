@@ -159,7 +159,7 @@ export function ProfileCard({ id, onClose }: { id: UUID; onClose: () => void }) 
             <div className="row-title" style={{ fontSize: 13 }}>Coins</div>
           </div>
           <span className="coin-pill">
-            <Icon name="circle" size={12} />
+            <Icon name="coin" size={13} />
             {(person.coins ?? 0).toLocaleString()}
           </span>
         </div>

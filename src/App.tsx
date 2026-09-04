@@ -23,6 +23,7 @@ import { Dashboard } from './features/dashboard/Dashboard';
 import { QuickStatus } from './features/status/QuickStatus';
 import { Shop } from './features/economy/Shop';
 import { Leaderboards } from './features/economy/Leaderboards';
+import { LeaderboardWidget } from './features/economy/LeaderboardWidget';
 import { SettingsModal } from './features/settings/SettingsModal';
 
 export default function App() {
@@ -38,9 +39,9 @@ export default function App() {
 
   if (!gated) return <SiteGate onPass={() => setGated(true)} />;
 
-  // Until the stored session has actually been read back, "no session" only
-  // means "not looked yet". Rendering the picker here is what made a refresh
-  // ask for the profile password again even though you were still signed in.
+  // Sessions are not persisted, so this normally resolves to "signed out"
+  // immediately — but it still has to resolve before we decide, or a password
+  // reset link would be shown the picker for a frame first.
   if (!authReady) {
     return (
       <div className="centered">
@@ -100,17 +101,8 @@ function Home() {
             here, so it sits in the corner rather than inside settings. */}
         <QuickStatus />
 
-        <button
-          className="btn btn-ghost btn-icon"
-          title="Leaderboards"
-          aria-label="Leaderboards"
-          onClick={() => setBoards(true)}
-        >
-          <Icon name="sparkle" size={17} />
-        </button>
-
         <button className="coin-pill coin-pill-btn" title="Shop" onClick={() => setShop(true)}>
-          <Icon name="circle" size={13} />
+          <Icon name="coin" size={14} />
           {profile.coins.toLocaleString()}
         </button>
 
@@ -136,10 +128,20 @@ function Home() {
           <GamesPanel />
         </Panel>
 
-        <Panel label="Who's around" className="column-status">
-          <Dashboard />
-          <StatusBoard />
-        </Panel>
+        <div className="column column-status">
+          <div className="label">Who's around</div>
+          <div className="panel panel-grow">
+            <Dashboard />
+            <StatusBoard />
+          </div>
+
+          <div className="label" style={{ paddingTop: 14 }}>
+            Leaderboard
+          </div>
+          <div className="panel">
+            <LeaderboardWidget onExpand={() => setBoards(true)} />
+          </div>
+        </div>
       </div>
 
       {settings && <SettingsModal onClose={() => setSettings(false)} />}

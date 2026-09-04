@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import type { UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { useDirectory } from '../../state/directory';
 import { useEconomy, type MatchResult } from '../../state/economy';
 import { Avatar, Modal, Spinner } from '../../components/ui';
 import { Icon, type IconName } from '../../components/Icon';
 import { isRated, rankFor } from './elo';
+import { buildRows, since, type Period } from './leaderboard';
 
-type Period = 'today' | 'week' | 'month' | 'all';
 type GameId = 'all' | 'haxball' | 'tictactoe' | 'gartic' | 'chess';
 
 const PERIODS: { id: Period; label: string }[] = [
@@ -19,52 +18,17 @@ const PERIODS: { id: Period; label: string }[] = [
 ];
 
 const GAMES: { id: GameId; label: string; icon: IconName }[] = [
-  { id: 'all', label: 'Everything', icon: 'sparkle' },
+  { id: 'all', label: 'Everything', icon: 'trophy' },
   { id: 'haxball', label: 'Haxball', icon: 'football' },
-  { id: 'chess', label: 'Chess', icon: 'grid' },
+  { id: 'chess', label: 'Chess', icon: 'chess' },
   { id: 'tictactoe', label: 'Tic-Tac-Toe', icon: 'grid' },
   { id: 'gartic', label: 'Gartic', icon: 'palette' },
 ];
 
-/** Start of the window, or null for all time. */
-function since(period: Period): Date | null {
-  const d = new Date();
-  if (period === 'today') {
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }
-  if (period === 'week') {
-    // Monday as the start of the week; Sunday counts as the end of one.
-    const day = (d.getDay() + 6) % 7;
-    d.setDate(d.getDate() - day);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }
-  if (period === 'month') {
-    d.setDate(1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }
-  return null;
-}
-
-interface Row {
-  id: UUID;
-  played: number;
-  won: number;
-  lost: number;
-  drawn: number;
-  score: number;
-  coins: number;
-  eloDelta: number;
-  elo: number;
-  streak: number;
-}
-
 export function Leaderboards({ onClose }: { onClose: () => void }) {
   const { profile } = useSession();
   const { byId, profiles } = useDirectory();
-  const { stats, statFor } = useEconomy();
+  const { stats } = useEconomy();
 
   const [period, setPeriod] = useState<Period>('week');
   const [game, setGame] = useState<GameId>('all');
@@ -93,62 +57,19 @@ export function Leaderboards({ onClose }: { onClose: () => void }) {
       });
   }, [period]);
 
-  const rows = useMemo<Row[]>(() => {
-    const map = new Map<UUID, Row>();
-    const blank = (id: UUID): Row => ({
-      id,
-      played: 0,
-      won: 0,
-      lost: 0,
-      drawn: 0,
-      score: 0,
-      coins: 0,
-      eloDelta: 0,
-      elo: 0,
-      streak: 0,
-    });
-
-    if (period === 'all') {
-      for (const s of stats) {
-        if (game !== 'all' && s.game !== game) continue;
-        const row = map.get(s.profile_id) ?? blank(s.profile_id);
-        row.played += s.played;
-        row.won += s.won;
-        row.lost += s.lost;
-        row.drawn += s.drawn;
-        row.score += s.score_for;
-        row.streak = Math.max(row.streak, s.best_streak);
-        // Across several games an average rating is the only honest summary.
-        row.elo = game === 'all' ? Math.max(row.elo, s.elo) : s.elo;
-        map.set(s.profile_id, row);
-      }
-    } else {
-      for (const r of results ?? []) {
-        if (game !== 'all' && r.game !== game) continue;
-        const row = map.get(r.profile_id) ?? blank(r.profile_id);
-        row.played++;
-        if (r.outcome === 'win') row.won++;
-        else if (r.outcome === 'loss') row.lost++;
-        else row.drawn++;
-        row.score += r.score;
-        row.coins += r.coins;
-        row.eloDelta += r.elo_delta;
-        map.set(r.profile_id, row);
-      }
-      for (const row of map.values()) {
-        const s = game === 'all' ? null : statFor(row.id, game);
-        row.elo = s?.elo ?? 0;
-      }
-    }
-
-    return [...map.values()].sort((a, b) => {
-      // Within a window, who actually won things; all-time, who is rated best.
-      if (period === 'all' && game !== 'all' && isRated(game)) return b.elo - a.elo;
-      if (b.won !== a.won) return b.won - a.won;
-      if (b.played !== a.played) return b.played - a.played;
-      return b.score - a.score;
-    });
-  }, [period, game, stats, results, statFor]);
+  const rows = useMemo(
+    () =>
+      buildRows({
+        // Everyone gets a row, played or not — a board of zeroes says more
+        // than an empty panel, and shows who is actually here.
+        everyone: profiles.map((p) => p.id),
+        period,
+        game,
+        stats,
+        results: results ?? [],
+      }),
+    [profiles, period, game, stats, results],
+  );
 
   const ratedColumn = game !== 'all' && isRated(game);
 
@@ -186,11 +107,7 @@ export function Leaderboards({ onClose }: { onClose: () => void }) {
           <Spinner />
         </div>
       ) : rows.length === 0 ? (
-        <div className="empty">
-          Nothing recorded {period === 'all' ? 'yet' : 'in that window'}.
-          <br />
-          Play a game and it will show up here.
-        </div>
+        <div className="empty">Nobody has a profile yet.</div>
       ) : (
         <div className="lb">
           <div className="lb-head">
@@ -206,8 +123,13 @@ export function Leaderboards({ onClose }: { onClose: () => void }) {
             const winPct = row.played ? Math.round((row.won / row.played) * 100) : 0;
 
             return (
-              <div className="lb-row" key={row.id} data-me={row.id === profile?.id}>
-                <span className="lb-pos" data-top={i < 3}>
+              <div
+                className="lb-row"
+                key={row.id}
+                data-me={row.id === profile?.id}
+                data-quiet={row.played === 0}
+              >
+                <span className="lb-pos" data-top={i < 3 && row.played > 0}>
                   {i + 1}
                 </span>
 
@@ -222,7 +144,9 @@ export function Leaderboards({ onClose }: { onClose: () => void }) {
                   <span style={{ minWidth: 0 }}>
                     <span className="lb-name">{p?.display_name ?? 'Someone'}</span>
                     <span className="lb-sub">
-                      {row.won}W · {row.lost}L · {row.drawn}D · {winPct}%
+                      {row.played === 0
+                        ? 'Has not played yet'
+                        : `${row.won}W · ${row.lost}L · ${row.drawn}D · ${winPct}%`}
                     </span>
                   </span>
                 </span>
@@ -262,9 +186,9 @@ export function Leaderboards({ onClose }: { onClose: () => void }) {
         </p>
       )}
 
-      {profiles.length > 0 && rows.length < profiles.length && period === 'all' && (
+      {rows.every((r) => r.played === 0) && (
         <p className="row-sub" style={{ marginTop: 12 }}>
-          Only people who have finished a game appear here.
+          Nothing played {period === 'all' ? 'yet' : 'in this window'}. Everyone starts level.
         </p>
       )}
     </Modal>

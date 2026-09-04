@@ -48,6 +48,8 @@ interface ChessState {
   bot: Difficulty | null;
   winner: Color | 'draw' | null;
   reason: string | null;
+  /** The move just played, for the slide animation and the highlight. */
+  last: { from: number; to: number } | null;
 }
 
 function readState(s: Record<string, unknown>): ChessState {
@@ -61,6 +63,7 @@ function readState(s: Record<string, unknown>): ChessState {
     bot: (s.bot as Difficulty | null) ?? null,
     winner: (s.winner as ChessState['winner']) ?? null,
     reason: (s.reason as string | null) ?? null,
+    last: (s.last as { from: number; to: number } | null) ?? null,
   };
 }
 
@@ -123,6 +126,7 @@ export function ChessGame({
           fen: toFen(after),
           history,
           san: [...state.san, san],
+          last: { from: move.from, to: move.to },
           winner: verdict.over ? (verdict.kind === 'checkmate' ? verdict.winner : 'draw') : null,
           reason: verdict.over ? verdict.kind : null,
           phase: verdict.over ? 'done' : 'play',
@@ -222,6 +226,7 @@ export function ChessGame({
         bot: null,
         winner: null,
         reason: null,
+        last: null,
       },
       'active',
     );
@@ -240,6 +245,7 @@ export function ChessGame({
         bot: difficulty,
         winner: null,
         reason: null,
+        last: null,
       },
       'active',
     );
@@ -339,6 +345,17 @@ export function ChessGame({
   const flipped = myColor === 'b' || (myColor === null && state.white === BOT_ID);
   const order = Array.from({ length: 64 }, (_, i) => (flipped ? 63 - i : i));
 
+  // Offset in squares from where the moving piece started, so CSS can slide it
+  // in from there. Flipping the board flips the direction of travel too.
+  const slideFrom = (sq: number): { dx: number; dy: number } | null => {
+    if (!state.last || state.last.to !== sq) return null;
+    const dir = flipped ? -1 : 1;
+    return {
+      dx: (file(state.last.from) - file(state.last.to)) * dir,
+      dy: (rank(state.last.from) - rank(state.last.to)) * dir,
+    };
+  };
+
   const lead = advantage(pos.board);
   const taken = capturedList(pos.board);
 
@@ -359,6 +376,8 @@ export function ChessGame({
           {order.map((sq) => {
             const piece = pos.board[sq];
             const dark = (file(sq) + rank(sq)) % 2 === 1;
+            const slide = slideFrom(sq);
+            const wasLast = state.last?.from === sq || state.last?.to === sq;
             return (
               <button
                 key={sq}
@@ -368,12 +387,30 @@ export function ChessGame({
                 data-target={targets.has(sq)}
                 data-capture={targets.has(sq) && Boolean(piece)}
                 data-check={sq === checkedKing}
+                data-last={wasLast}
                 onClick={() => tap(sq)}
                 aria-label={squareName(sq) + (piece ? ` ${piece}` : ' empty')}
               >
                 {piece && (
-                  <span className="chess-piece" data-color={piece[0]}>
-                    {GLYPH[piece]}
+                  <span
+                    className="chess-piece-wrap"
+                    // Keyed on the move so React remounts it and the animation
+                    // replays; without that a piece moved twice would sit still
+                    // the second time.
+                    key={`${state.san.length}-${sq}`}
+                    data-slide={slide ? 'true' : undefined}
+                    style={
+                      slide
+                        ? ({
+                            ['--dx' as string]: `${slide.dx * 100}%`,
+                            ['--dy' as string]: `${slide.dy * 100}%`,
+                          } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    <span className="chess-piece" data-color={piece[0]}>
+                      {GLYPH[piece]}
+                    </span>
                   </span>
                 )}
                 {file(sq) === (flipped ? 7 : 0) && (
