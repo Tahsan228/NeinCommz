@@ -152,13 +152,24 @@ confirmation. Gartic offers **Start anyway** below its recommended player count,
 since two people still works — the chains are just shorter.
 
 - **Tic-tac-toe** — moves are applied by a Postgres function, so a doctored
-  board pushed from a browser console is rejected rather than believed.
-- **Gartic Phone** — prompt → draw → guess → draw, with a per-round timer and a
-  scrollable album at the end. Drawings are stored as stroke arrays, not PNGs:
-  kilobytes instead of hundreds of kilobytes, and the album replays them.
-- **Haxball** — top-down 2D football, host-authoritative. The host runs a 60 Hz
-  physics loop and broadcasts snapshots at 30 Hz over Supabase Realtime;
-  everyone else sends key state.
+  board pushed from a browser console is rejected rather than believed. Play a
+  best-of series or a **knockout tournament** for 3–8 players with a live
+  bracket; draws are replayed rather than eliminating anyone.
+- **Gartic Phone** — prompt → draw → guess → draw, with per-phase timers the
+  host sets, an optional "draw anything" opening and a pinned round count. The
+  tools cover brush, eraser, paint bucket, line, rectangle, ellipse and an
+  eyedropper, with a colour wheel, undo/redo and recent colours. At the end the
+  album is **revealed one panel at a time**, host-driven so everyone sees the
+  same picture together, with autoplay. Drawings are stored as operation lists
+  rather than PNGs: kilobytes instead of hundreds, replayable at any size, and
+  it is what makes the paint bucket possible at all.
+- **Haxball** — top-down 2D football, host-authoritative. Players start in a
+  lobby and pick Red, Blue or the bench; the host sets team size, pitch size,
+  player speed, shot power, charge rate, ball drag, goal limit and match length,
+  then starts the match. Shots are **charged** — hold the kick key to build
+  power, with a dotted aim guide and a power meter — and a **best-of series**
+  tracks match wins. The host runs a 60 Hz physics loop and broadcasts
+  snapshots at 30 Hz over Supabase Realtime; everyone else sends key state.
 
   **Be realistic about this one.** It is a simplified take, not a clone, and
   every input takes a round trip through Supabase before it shows up. It is fine
@@ -209,13 +220,14 @@ glow behind the page.
 npm test
 ```
 
-62 tests covering the parts where bugs actually hide: the status engine's
+87 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
-formatting, tic-tac-toe win detection, Gartic's chain rotation (nobody should
-ever get their own chain twice), Haxball's collision and goal maths, and two
-jsdom tests — one that mounts the whole app and walks through the front door,
-and one pinning the game-room loading contract that once made every game
-unopenable.
+formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
+Gartic's chain rotation (nobody should ever get their own chain twice) and its
+configurable rounds, Haxball's collisions, goal maths, charged shots and match
+limits, and two jsdom tests — one that mounts the whole app and walks through
+the front door, and one pinning the game-room loading contract that once made
+every game unopenable.
 
 The suite pins its own `VITE_…` values, so it behaves identically on every
 machine and never touches a real Supabase project.
