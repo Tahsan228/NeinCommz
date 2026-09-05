@@ -170,6 +170,8 @@ export function HaxballGame({
   const clipRef = useRef<Snapshot[]>([]);
   /** A throwaway world used only to draw the replay back. */
   const replayWorldRef = useRef<World | null>(null);
+  /** Where the replay camera has got to, so it can lag behind the ball. */
+  const replayCamRef = useRef({ x: 0, y: 0 });
 
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [clock, setClock] = useState(0);
@@ -443,6 +445,7 @@ export function HaxballGame({
         clipRef.current = tapeRef.current.slice();
       } else if (w.celebrating === 0) {
         clipRef.current = [];
+        replayCamRef.current = { x: 0, y: 0 };
         // Play restarts from behind a countdown, so anything on the tape from
         // before it belongs to a different passage of play. Left there, a
         // quick goal's run-up reaches back over the restart and opens the
@@ -480,6 +483,7 @@ export function HaxballGame({
           clip: clipRef.current,
           replayWorld: replayWorldRef.current,
           total: celebrateFromRef.current || CELEBRATION_TICKS,
+          camera: replayCamRef.current,
         });
         return;
       }
@@ -1384,14 +1388,22 @@ function drawPitch(
  * with a rising alpha, so the picture never cuts and never dips to black. The
  * only darkening anywhere in the game belongs to the countdown.
  */
-const MOMENT_END = 0.34;
-const REPLAY_END = 0.88;
+const MOMENT_END = 0.26;
+const REPLAY_END = 0.9;
 const CROSSFADE = 0.05;
+
+/** How hard the replay camera chases the ball. Lower lags further behind. */
+const CAMERA_EASE = 0.08;
+
+/** Close enough to see the touch, wide enough to see it travel. */
+const REPLAY_ZOOM = 1.3;
 
 interface Tape {
   clip: Snapshot[];
   replayWorld: World | null;
   total: number;
+  /** Where the replay camera has got to, carried between frames. */
+  camera: { x: number; y: number };
 }
 
 function easeOut(t: number): number {
@@ -1616,8 +1628,22 @@ function drawGoalSequence(
     rw.countdown = 0;
     rw.goal = null;
 
+    // Follow the ball rather than being welded to it. Pinned exactly, at a
+    // zoom, the ball sits dead still and the entire pitch tears past behind
+    // it -- which looks like fast-forward however slowly the clip is actually
+    // being played. Lagging the camera lets the ball move across the frame,
+    // which is what reading speed on screen actually depends on.
+    const cam = tape.camera;
+    if (cam.x === 0 && cam.y === 0) {
+      cam.x = rw.ball.x;
+      cam.y = rw.ball.y;
+    } else {
+      cam.x += (rw.ball.x - cam.x) * CAMERA_EASE;
+      cam.y += (rw.ball.y - cam.y) * CAMERA_EASE;
+    }
+
     ctx.globalAlpha = aReplay;
-    withCamera(ctx, p, { x: rw.ball.x, y: rw.ball.y }, 1.5, p.w / 2, p.h / 2, () => {
+    withCamera(ctx, p, { x: cam.x, y: cam.y }, REPLAY_ZOOM, p.w / 2, p.h / 2, () => {
       drawPitch(ctx, rw, me, profiles, {
         trail: [],
         equippedOf: cosmetics.equippedOf,

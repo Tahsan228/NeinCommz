@@ -56,6 +56,24 @@ function MessageText({ body }: { body: string }) {
   );
 }
 
+/**
+ * Drop straight to the newest message, without animating.
+ *
+ * `.msgs` carries `scroll-behavior: smooth`, which turns every programmatic
+ * scroll into a glide. That is what stopped the chat opening at the bottom:
+ * the glide fires `onScroll` all the way down, and each of those events is
+ * measured against the bottom to decide whether the reader has scrolled away.
+ * Half a second of "not at the bottom yet" set pinned to false, which then
+ * blocked the very re-pins that were meant to finish the job -- so the list
+ * settled somewhere short of the newest message and stayed there.
+ *
+ * Smooth is still what the search-hit jump wants, so it is asked for there
+ * rather than switched off in the stylesheet.
+ */
+function jumpToBottom(el: HTMLElement): void {
+  el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+}
+
 export function ChatPanel({
   roomId,
   title,
@@ -157,9 +175,11 @@ export function ChatPanel({
     setHasOlder(rows.length === PAGE);
     setMessages((cur) => [...rows, ...cur]);
 
-    // Keep the reading position steady instead of yanking to the top.
+    // Keep the reading position steady instead of yanking to the top. Instant
+    // for the same reason as jumpToBottom: an animated restore slides away
+    // from the message you were reading rather than holding it still.
     requestAnimationFrame(() => {
-      if (el) el.scrollTop = el.scrollHeight - prevHeight;
+      if (el) el.scrollTo({ top: el.scrollHeight - prevHeight, behavior: 'instant' });
     });
   }, [messages, roomId]);
 
@@ -381,7 +401,9 @@ export function ChatPanel({
     pinnedRef.current = false;
 
     requestAnimationFrame(() => {
-      document.getElementById('msg-' + target.id)?.scrollIntoView({ block: 'center' });
+      document
+        .getElementById('msg-' + target.id)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     });
     window.setTimeout(() => setHit(null), 2600);
   }, [roomId]);
@@ -397,35 +419,41 @@ export function ChatPanel({
   const stickToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    jumpToBottom(el);
   }, []);
 
   /**
    * Hold the bottom until the conversation stops growing under us.
    *
-   * A single scrollTop lands short: bubbles have not been laid out, avatars
-   * and images have no height yet, and the web font has not swapped in — each
-   * of which makes the list taller *after* we scrolled, leaving you a little
-   * way up from the newest message. Rather than guess at timeouts, re-pin
-   * every frame until the height has held still for a few frames, with a hard
-   * cap so this can never become a permanent loop.
+   * A single scroll lands short: bubbles have not been laid out, avatars and
+   * images have no height yet, and the web font has not swapped in — each of
+   * which makes the list taller *after* we scrolled, leaving you a little way
+   * up from the newest message.
+   *
+   * So follow every height change for a moment rather than stopping at the
+   * first few frames that happen to match. Stopping early was the difference
+   * between landing on the newest message and landing just above it: four
+   * still frames is sixty milliseconds, and a font swap lands well after that.
+   * A hard deadline keeps it from ever becoming a permanent loop, and a reader
+   * who scrolls up in the meantime unpins and is left alone.
    */
-  const holdBottom = useCallback(() => {
+  const holdBottom = useCallback((forced: boolean) => {
     const el = scrollRef.current;
     if (!el) return () => {};
 
     let raf = 0;
-    let settled = 0;
     let last = -1;
     const deadline = performance.now() + 1500;
 
     const tick = () => {
       const now = scrollRef.current;
       if (!now) return;
-      now.scrollTop = now.scrollHeight;
-      settled = now.scrollHeight === last ? settled + 1 : 0;
-      last = now.scrollHeight;
-      if (settled < 4 && performance.now() < deadline) raf = requestAnimationFrame(tick);
+      if (!pinnedRef.current && !forced) return;
+      if (now.scrollHeight !== last) {
+        jumpToBottom(now);
+        last = now.scrollHeight;
+      }
+      if (performance.now() < deadline) raf = requestAnimationFrame(tick);
     };
     tick();
     return () => cancelAnimationFrame(raf);
@@ -433,7 +461,7 @@ export function ChatPanel({
 
   useEffect(() => {
     if (!pinnedRef.current && !prefs.autoScroll) return;
-    return holdBottom();
+    return holdBottom(prefs.autoScroll);
   }, [messages.length, typers.size, prefs.autoScroll, roomId, loading, holdBottom]);
 
   /* -------------------------------------------------------------- send --- */

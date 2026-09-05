@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_SLOW_SHARE,
+  RELEASE_SPEED,
   SLOW_SPEED,
   inSlowMotion,
   planReplay,
@@ -69,14 +69,18 @@ describe('replay pacing', () => {
     }
   });
 
-  it('covers the shot itself in the slow half', () => {
+  it('covers the shot itself in the crawl', () => {
     const clip = tape(480, 1);
     const shot = 440;
     const plan = planReplay(clip, shot, SECONDS);
     expect(plan.slowFromTick).toBeLessThanOrEqual(shot);
-    expect(plan.toTick).toBeGreaterThanOrEqual(shot);
+    expect(plan.slowToTick).toBeGreaterThanOrEqual(shot);
     expect(inSlowMotion(plan.runUpShare + 0.01, plan)).toBe(true);
     expect(inSlowMotion(plan.runUpShare - 0.01, plan)).toBe(false);
+    // Nothing left to release after a strike this close in, so the crawl
+    // carries the ball all the way over the line.
+    expect(plan.slowToTick).toBe(plan.toTick);
+    expect(inSlowMotion(0.999, plan)).toBe(true);
   });
 
   it('ends on the ball crossing the line', () => {
@@ -102,14 +106,26 @@ describe('replay pacing', () => {
     }
   });
 
-  it('gives the run-up back its time when the ball was in the air a long while', () => {
-    // A shot from distance can outlast the whole replay at a flat 0.3x, so
-    // past a point the crawl gives speed back instead of eating the run-up.
+  it('still crawls the strike when the ball was in the air a long while', () => {
+    // The bug this replaced: a long flight made the maths hand speed back
+    // until there was no slow motion left anywhere and the whole replay ran
+    // at life speed. The strike is crawled whatever else has to give.
     const clip = tape(600, 1);
     const plan = planReplay(clip, 480, SECONDS); // two seconds of flight
-    expect(plan.runUpShare).toBeGreaterThan(0);
-    expect(plan.runUpShare).toBeCloseTo(1 - MAX_SLOW_SHARE, 5);
-    expect(speed(plan.runUpShare + 0.02, 0.98, plan, SECONDS)).toBeLessThan(1);
+    expect(plan.slowShare).toBeGreaterThan(0.2);
+    expect(speed(plan.runUpShare + 0.02, plan.runUpShare + plan.slowShare - 0.02, plan, SECONDS))
+      .toBeLessThan(0.75);
+  });
+
+  it('runs the ball into the net faster than the strike, but never faster than life', () => {
+    const clip = tape(600, 1);
+    const plan = planReplay(clip, 480, SECONDS);
+    const slowEnd = plan.runUpShare + plan.slowShare;
+    const release = speed(slowEnd + 0.02, 0.98, plan, SECONDS);
+    const crawl = speed(plan.runUpShare + 0.02, slowEnd - 0.02, plan, SECONDS);
+    expect(release).toBeGreaterThan(crawl);
+    expect(release).toBeLessThanOrEqual(1.05);
+    expect(RELEASE_SPEED).toBeLessThan(1);
   });
 
   it('falls back to life speed rather than cramming an unshowable clip in', () => {
@@ -119,6 +135,22 @@ describe('replay pacing', () => {
     const plan = planReplay(clip, 300, SECONDS); // five seconds of flight
     for (let p = 0; p < 0.99; p += 0.05) {
       expect(speed(p, p + 0.01, plan, SECONDS)).toBeLessThanOrEqual(1.05);
+    }
+  });
+
+  it('never leaves a goal without any slow motion at all', () => {
+    // Across every flight time a real goal can have, there is always a crawl.
+    const clip = tape(600, 1);
+    for (let flight = 5; flight <= 150; flight += 5) {
+      const plan = planReplay(clip, 600 - flight, SECONDS);
+      expect(plan.slowShare, `flight ${flight}`).toBeGreaterThan(0.15);
+      const crawl = speed(
+        plan.runUpShare + 0.02,
+        plan.runUpShare + plan.slowShare - 0.02,
+        plan,
+        SECONDS,
+      );
+      expect(crawl, `flight ${flight}`).toBeLessThan(0.8);
     }
   });
 
