@@ -133,14 +133,25 @@ export function buildRows({ everyone, period, game, stats, results }: BuildInput
     for (const row of map.values()) if (row.elo === 0) row.elo = STARTING_ELO;
   }
 
+  // A rated board is ranked by the rating it is showing. It used to be ranked
+  // by wins in every window except all time, so a board with a Rating column
+  // down the middle listed 1240 under 980 whenever the lower-rated player had
+  // played more games -- which reads as the leaderboard simply being wrong.
+  const byRating = game !== 'all' && isRated(game);
+
   return [...map.values()].sort((a, b) => {
     // People who have played always outrank people who have not, whatever
     // their notional starting rating says.
     if ((a.played === 0) !== (b.played === 0)) return a.played === 0 ? 1 : -1;
-    if (period === 'all' && game !== 'all' && isRated(game) && b.elo !== a.elo) {
-      return b.elo - a.elo;
-    }
+
+    if (byRating && b.elo !== a.elo) return b.elo - a.elo;
+
     if (b.won !== a.won) return b.won - a.won;
+    // Between two people on the same number of wins, the one who needed fewer
+    // games for them is ahead. Ranking on wins alone just ranks on turnout.
+    const aRate = a.played ? a.won / a.played : 0;
+    const bRate = b.played ? b.won / b.played : 0;
+    if (bRate !== aRate) return bRate - aRate;
     if (b.played !== a.played) return b.played - a.played;
     if (b.score !== a.score) return b.score - a.score;
     return a.id.localeCompare(b.id);

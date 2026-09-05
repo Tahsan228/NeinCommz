@@ -446,7 +446,12 @@ function checkEnd(w: World): void {
 
 /** Advance the world one fixed step. Mutates `w` — it is the hot loop. */
 export function step(w: World, inputs: Map<string, Input>): void {
-  if (w.finished) return;
+  // A decided match still owes everyone the goal that decided it. Stopping the
+  // world the instant the last goal went in froze the celebration on its first
+  // frame and left it there — the clock the goal sequence reads is
+  // `celebrating`, so nothing that follows a winning goal can play unless it
+  // keeps draining. Only once it has run out does the world actually stop.
+  if (w.finished && w.celebrating === 0) return;
 
   // The countdown freezes play but still advances, so the clock only starts
   // when the match actually does.
@@ -460,11 +465,15 @@ export function step(w: World, inputs: Map<string, Input>): void {
   if (w.celebrating > 0) {
     w.celebrating--;
     if (w.celebrating === 0) {
-      resetKickoff(w);
       w.goal = null;
       // Restart behind a countdown, the same as the opening whistle, so
-      // nobody is caught still watching the replay when play resumes.
-      if (!w.finished) w.countdown = COUNTDOWN_TICKS;
+      // nobody is caught still watching the replay when play resumes. A match
+      // that is already decided is not restarting, so it keeps the picture it
+      // ended on rather than snapping everyone back to the centre circle.
+      if (!w.finished) {
+        resetKickoff(w);
+        w.countdown = COUNTDOWN_TICKS;
+      }
     }
     checkEnd(w);
     return;

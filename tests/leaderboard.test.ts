@@ -109,6 +109,60 @@ describe('ordering', () => {
     expect(rows[0].id).toBe('ben');
   });
 
+  it('ranks a rated board by rating inside a window too', () => {
+    // The board shows a Rating column in every period. Ordering it by wins
+    // while showing ratings puts 1240 underneath 980 and reads as a bug.
+    const rows = buildRows({
+      everyone: EVERYONE,
+      period: 'week',
+      game: 'chess',
+      stats: [
+        stat({ profile_id: 'ann', game: 'chess', played: 9, won: 3, elo: 980 }),
+        stat({ profile_id: 'ben', game: 'chess', played: 4, won: 2, elo: 1240 }),
+      ],
+      results: [
+        match({ profile_id: 'ann', game: 'chess', outcome: 'win' }),
+        match({ profile_id: 'ann', game: 'chess', outcome: 'win' }),
+        match({ profile_id: 'ann', game: 'chess', outcome: 'win' }),
+        match({ profile_id: 'ben', game: 'chess', outcome: 'win' }),
+      ],
+    });
+    expect(rows[0].id).toBe('ben');
+    expect(rows[0].elo).toBe(1240);
+  });
+
+  it('still keeps the unplayed below the played on a rated board', () => {
+    // A high notional starting rating must not outrank somebody who has
+    // actually turned up and lost.
+    const rows = buildRows({
+      everyone: EVERYONE,
+      period: 'week',
+      game: 'chess',
+      stats: [stat({ profile_id: 'ann', game: 'chess', played: 2, lost: 2, elo: 940 })],
+      results: [
+        match({ profile_id: 'ann', game: 'chess', outcome: 'loss' }),
+        match({ profile_id: 'ann', game: 'chess', outcome: 'loss' }),
+      ],
+    });
+    expect(rows[0].id).toBe('ann');
+  });
+
+  it('separates two people on the same wins by how many games it took', () => {
+    const rows = buildRows({
+      everyone: ['ann', 'ben'],
+      period: 'week',
+      game: 'gartic',
+      stats: [],
+      results: [
+        match({ profile_id: 'ann', game: 'gartic', outcome: 'win' }),
+        match({ profile_id: 'ann', game: 'gartic', outcome: 'loss' }),
+        match({ profile_id: 'ann', game: 'gartic', outcome: 'loss' }),
+        match({ profile_id: 'ben', game: 'gartic', outcome: 'win' }),
+      ],
+    });
+    expect(rows[0].id).toBe('ben');
+  });
+
   it('ranks by wins inside a window', () => {
     const rows = buildRows({
       everyone: EVERYONE,

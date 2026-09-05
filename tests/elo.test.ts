@@ -84,6 +84,24 @@ describe('eloDelta', () => {
     const loss = eloDelta(1000, 1000, 'loss', 20);
     expect(Math.abs(win + loss)).toBeLessThanOrEqual(1);
   });
+
+  it('rates both sides off what they walked in with, not off each other', () => {
+    // The rule the database was breaking: it wrote the winner's new rating
+    // before reading it back as the loser's opponent, so the pair were rated
+    // against different numbers and the two halves of one result did not
+    // match. Both sides are measured against the pre-match standings.
+    const before = { a: 1000, b: 1000 };
+    const gain = eloDelta(before.a, before.b, 'win', 0);
+    const drop = eloDelta(before.b, before.a, 'loss', 0);
+    expect(gain).toBe(20);
+    expect(drop).toBe(-20);
+
+    // Reading the winner's updated rating instead is what skewed it: the
+    // loser is suddenly facing 1020 rather than the 1000 they sat down to.
+    const skewed = eloDelta(before.b, before.a + gain, 'loss', 0);
+    expect(skewed).toBe(-19);
+    expect(skewed).not.toBe(drop);
+  });
 });
 
 describe('applyDelta', () => {

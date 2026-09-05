@@ -587,3 +587,59 @@ describe('practice settings', () => {
     expect(w.finished).toBe(false);
   });
 });
+
+describe('the goal that wins it', () => {
+  function winningGoal() {
+    const w = kickedOff([{ id: 'a', team: 0 }], { ...DEFAULT_RULES, scoreLimit: 1 });
+    const { right, goalTop, goalBottom } = bounds(w.pitch);
+    w.ball.x = right + BALL_R + 2;
+    w.ball.y = (goalTop + goalBottom) / 2;
+    step(w, new Map());
+    return w;
+  }
+
+  it('decides the match on the goal itself', () => {
+    const w = winningGoal();
+    expect(w.finished).toBe(true);
+    expect(w.winner).toBe(0);
+    expect(w.celebrating).toBe(CELEBRATION_TICKS);
+  });
+
+  it('still plays the celebration out rather than freezing on it', () => {
+    // The goal sequence reads `celebrating` as its clock. Stopping the world
+    // the instant the match was decided pinned that clock and the winning goal
+    // was the one goal of the match nobody ever got to watch.
+    const w = winningGoal();
+    const started = w.celebrating;
+
+    for (let i = 0; i < 20; i++) step(w, new Map());
+    expect(w.celebrating).toBeLessThan(started);
+    expect(w.tick).toBeGreaterThan(0);
+
+    for (let i = 0; i < CELEBRATION_TICKS; i++) step(w, new Map());
+    expect(w.celebrating).toBe(0);
+  });
+
+  it('stops for good once the celebration has run, without kicking off again', () => {
+    const w = winningGoal();
+    for (let i = 0; i < CELEBRATION_TICKS + 5; i++) step(w, new Map());
+
+    expect(w.countdown).toBe(0);
+    const frozen = w.tick;
+    for (let i = 0; i < 30; i++) step(w, new Map());
+    expect(w.tick).toBe(frozen);
+    expect(w.score.red).toBe(1);
+  });
+
+  it('leaves the tape long enough for the replay to be cut from it', () => {
+    // The clip is taken while `celebrating` counts down; a world that has
+    // stopped ticking never gives the renderer a second frame to cut from.
+    const w = winningGoal();
+    const ticks: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      step(w, new Map());
+      ticks.push(w.tick);
+    }
+    expect(new Set(ticks).size).toBe(100);
+  });
+});

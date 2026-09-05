@@ -1068,3 +1068,139 @@ on conflict (id) do update
       rarity = excluded.rarity,
       is_default = excluded.is_default,
       blurb = excluded.blurb;
+
+
+-- ======================================================== round 7 fixes ====
+-- How a match is rated. Same signature as before, so a project that has not
+-- had this pasted in yet keeps working on the old version -- it just keeps the
+-- old maths.
+
+/*
+ * Two things were wrong, and both of them quietly bent everybody's rating,
+ * which is the sort of thing you cannot see by playing.
+ *
+ * 1. game_stats rows were created inside the rating loop. The opponent average
+ *    is read from that table, so on somebody's first game of a given kind the
+ *    first player in the list was averaged against a row set that did not
+ *    include them yet -- and with nobody to average, was rated against
+ *    themselves.
+ *
+ * 2. Each player's rating was written before the next player's was read, so
+ *    the second player was rated against the first player's post-match number.
+ *    Elo is simultaneous: everyone is rated against the ratings everyone
+ *    walked in with, or a win and the loss facing it are not the same size and
+ *    the group's numbers drift.
+ *
+ * Both are fixed by taking one snapshot of where everybody stood before the
+ * match and rating the whole thing against that.
+ */
+create or replace function award_match(p_session uuid, p_outcomes jsonb, p_round int default 1)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  s          game_sessions%rowtype;
+  rated      boolean;
+  entry      jsonb;
+  pid        uuid;
+  outcome    text;
+  score      int;
+  cur_elo    int;
+  cur_played int;
+  opp_elo    numeric;
+  delta      int;
+  coins_won  int;
+  before     jsonb := '{}'::jsonb;
+  results    jsonb := '[]'::jsonb;
+begin
+  select * into s from game_sessions where id = p_session;
+  if not found then raise exception 'no such session'; end if;
+
+  -- This round already paid out, so this is a duplicate report.
+  if exists (
+    select 1 from match_results
+    where session_id = p_session and round = p_round
+  ) then
+    return '[]'::jsonb;
+  end if;
+
+  rated := s.game in ('tictactoe', 'haxball', 'chess');
+
+  -- Everybody has a row before anybody is rated.
+  insert into game_stats (profile_id, game)
+  select distinct (o->>'profile_id')::uuid, s.game
+    from jsonb_array_elements(p_outcomes) o
+  on conflict (profile_id, game) do nothing;
+
+  -- Where everyone stood walking in. Every delta below is measured off this,
+  -- never off the table, which is being written to as the loop runs.
+  select coalesce(
+           jsonb_object_agg(
+             gs.profile_id::text,
+             jsonb_build_object('elo', gs.elo, 'played', gs.played)),
+           '{}'::jsonb)
+    into before
+    from game_stats gs
+   where gs.game = s.game
+     and gs.profile_id in (
+       select (o->>'profile_id')::uuid from jsonb_array_elements(p_outcomes) o);
+
+  for entry in select * from jsonb_array_elements(p_outcomes)
+  loop
+    pid     := (entry->>'profile_id')::uuid;
+    outcome := coalesce(entry->>'outcome', 'draw');
+    score   := coalesce((entry->>'score')::int, 0);
+
+    if outcome not in ('win', 'loss', 'draw') then
+      raise exception 'bad outcome %', outcome;
+    end if;
+
+    cur_elo    := coalesce((before -> pid::text ->> 'elo')::int, 1000);
+    cur_played := coalesce((before -> pid::text ->> 'played')::int, 0);
+
+    -- Everyone else in this match, at the rating they came in on.
+    select coalesce(
+             avg(coalesce((before -> (o->>'profile_id') ->> 'elo')::int, 1000)),
+             cur_elo)
+      into opp_elo
+      from jsonb_array_elements(p_outcomes) o
+     where (o->>'profile_id')::uuid <> pid;
+
+    delta := case when rated then elo_delta(cur_elo, round(opp_elo)::int, outcome, cur_played)
+                  else 0 end;
+
+    coins_won := case outcome when 'win' then 60 when 'draw' then 30 else 15 end
+                 + greatest(score, 0) * 10;
+
+    insert into match_results
+      (session_id, profile_id, game, outcome, elo_before, elo_after, elo_delta,
+       coins, score, round)
+    values
+      (p_session, pid, s.game, outcome, cur_elo, greatest(100, cur_elo + delta), delta,
+       coins_won, score, p_round);
+
+    update game_stats set
+      elo         = greatest(100, elo + delta),
+      played      = played + 1,
+      won         = won   + case when outcome = 'win'  then 1 else 0 end,
+      lost        = lost  + case when outcome = 'loss' then 1 else 0 end,
+      drawn       = drawn + case when outcome = 'draw' then 1 else 0 end,
+      score_for   = score_for + greatest(score, 0),
+      streak      = case when outcome = 'win' then streak + 1 else 0 end,
+      best_streak = greatest(best_streak,
+                             case when outcome = 'win' then streak + 1 else 0 end),
+      updated_at  = now()
+    where profile_id = pid and game = s.game;
+
+    update profiles set coins = coins + coins_won where id = pid;
+
+    results := results || jsonb_build_object(
+      'profile_id', pid, 'elo_delta', delta, 'coins', coins_won);
+  end loop;
+
+  return results;
+end $fn$;
+
+grant execute on function award_match(uuid, jsonb, int) to authenticated;

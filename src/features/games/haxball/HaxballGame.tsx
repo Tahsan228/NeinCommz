@@ -6,6 +6,8 @@ import { Icon } from '../../../components/Icon';
 import { setState, setTeam } from '../lobby';
 import { BOT_PREFIX, BOT_SKILL, botInputs, botName, isBot, type BotSkill } from './bot';
 import { clampFocus, envelope } from './camera';
+import { inSlowMotion, planReplay, sampleAt, tickAt } from './replay';
+import { countsForRating, matchOutcomes } from './report';
 import { useEconomy } from '../../../state/economy';
 import {
   celebrationText,
@@ -71,6 +73,10 @@ const TEAM_NAME = ['Red', 'Blue'];
 const TICK_MS = 1000 / 60;
 const BROADCAST_EVERY = 2; // every other tick -> ~30 snapshots/second
 
+/** How far back the replay tape reaches. Eight seconds is more than a replay
+ *  ever shows, which leaves the run-up room to start wherever it needs to. */
+const TAPE_TICKS = 60 * 8;
+
 export const SPECTATOR = 2;
 
 interface Series {
@@ -105,6 +111,14 @@ function readState(s: Record<string, unknown>): HaxState {
     startedAt: (s.startedAt as string | null) ?? null,
     practice: (s.practice as boolean) ?? false,
   };
+}
+
+/** Whether the buff strip actually needs redrawing. */
+function sameBuffs(
+  a: { kind: string; left: number }[],
+  b: { kind: string; left: number }[],
+): boolean {
+  return a.length === b.length && a.every((x, i) => x.kind === b[i].kind && x.left === b[i].left);
 }
 
 /** Matches needed to take the series. */
@@ -308,50 +322,58 @@ export function HaxballGame({
   }, [isHost, ready, state.phase, state.bots.red, state.bots.blue, state.botSkill]);
 
   /* -------------------------------------------- host reports the result -- */
+  // Everything the reporter needs, kept somewhere it can be read without being
+  // depended on. This is the whole reason the fix below works: `state` and
+  // `onPitch` are rebuilt on every render, so an effect that lists them tears
+  // its interval down and starts a new one every time anything re-renders.
+  // The charge meter re-renders ten times a second, so a 400ms interval never
+  // survived long enough to fire once -- the host never reported a result, the
+  // game never left the pitch, and no Haxball match has ever paid a rating.
+  const liveRef = useRef({ state, onPitch, award });
+  liveRef.current = { state, onPitch, award };
+
   useEffect(() => {
     if (!isHost || state.phase !== 'playing' || state.practice) return;
     const id = window.setInterval(() => {
       const w = worldRef.current;
       if (!w || !w.finished) return;
-      if (reportedRef.current === state.series.match) return;
-      reportedRef.current = state.series.match;
+      // Let the goal that won it finish playing first. The result screen
+      // cutting in over the celebration is how the winning goal ended up being
+      // the one goal of the match nobody got to watch.
+      if (w.celebrating > 0) return;
 
-      const wins = { ...state.series.wins };
+      const { state: live, onPitch: seats, award: pay } = liveRef.current;
+      if (reportedRef.current === live.series.match) return;
+      reportedRef.current = live.series.match;
+
+      const wins = { ...live.series.wins };
       if (w.winner === 0) wins.red++;
       else if (w.winner === 1) wins.blue++;
 
       void setState(
         session.id,
         {
-          ...state,
+          ...live,
           phase: 'result',
           lastResult: { red: w.score.red, blue: w.score.blue, winner: w.winner ?? -1 },
-          series: { ...state.series, wins },
+          series: { ...live.series, wins },
         },
         'active',
-      );
+      ).catch(() => {
+        // A dropped write would otherwise strand the match on the pitch for
+        // good, since the marker above says it has already been dealt with.
+        reportedRef.current = -1;
+      });
 
       // Rate the match. Everyone on the pitch is scored against the other
       // side; goals they were part of pay the per-score bonus. Only the host
-      // reports, and the database refuses a second report for this session.
-      // Bots have no rating and no wallet, so only the people are reported.
-      void award(
-        session.id,
-        onPitch.map((p) => ({
-          profile_id: p.profile_id,
-          outcome:
-            w.winner === null
-              ? ('draw' as const)
-              : p.team === w.winner
-                ? ('win' as const)
-                : ('loss' as const),
-          score: p.team === 0 ? w.score.red : w.score.blue,
-        })),
-        state.series.match,
-      );
+      // reports, and the database refuses a second report for this round.
+      if (countsForRating(seats, live.bots)) {
+        void pay(session.id, matchOutcomes(seats, w.winner, w.score), live.series.match);
+      }
     }, 400);
     return () => window.clearInterval(id);
-  }, [isHost, state, session.id, onPitch, award]);
+  }, [isHost, state.phase, state.practice, session.id]);
 
   /* --------------------------------------------------- clock + my charge - */
   useEffect(() => {
@@ -369,9 +391,12 @@ export function HaxballGame({
           if (mine.buffs[kind] > 0) carried.push({ kind, left: Math.ceil(mine.buffs[kind] / 60) });
         }
         if (mine.teleports > 0) carried.push({ kind: 'teleport', left: mine.teleports });
-        setMyBuffs(carried);
+        // A fresh array is never equal to the last one, so setting it
+        // unconditionally re-rendered the whole game ten times a second for
+        // the entire match, whether or not anything had changed.
+        setMyBuffs((prev) => (sameBuffs(prev, carried) ? prev : carried));
       } else {
-        setMyBuffs([]);
+        setMyBuffs((prev) => (prev.length === 0 ? prev : []));
       }
     }, 100);
     return () => window.clearInterval(id);
@@ -402,23 +427,27 @@ export function HaxballGame({
         const tape = tapeRef.current;
         if (tape.length === 0 || tape[tape.length - 1].t !== w.tick) {
           tape.push(snapshot(w));
-          if (tape.length > 360) tape.shift();
+          // Trimmed by how far back it reaches rather than by how many entries
+          // it holds. A watching client only records every other tick, so a
+          // fixed entry count is a different length of football on every
+          // screen -- and that is what the replay was being paced against.
+          const oldest = w.tick - TAPE_TICKS;
+          while (tape.length > 1 && tape[0].t < oldest) tape.shift();
         }
       }
 
-      // Freeze the tape the instant a goal goes in.
+      // Freeze the tape the instant a goal goes in. The whole of it: how much
+      // is actually shown, and how fast, is worked out in planReplay from the
+      // time the replay has been given, not guessed at here.
       if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 12) {
-        // Size the clip to the time it will be given, or it plays at whatever
-        // ratio happens to fall out. A fixed four seconds squeezed into a
-        // practice celebration ran at roughly five times speed.
-        const window = Math.round((REPLAY_END - MOMENT_END) * w.celebrating);
-        // Slow motion stretches part of the timeline, so a little less footage
-        // than the window comes out at about real speed overall.
-        const frames = Math.max(40, Math.round(window * 0.72));
-        clipRef.current = tapeRef.current.slice(-frames);
+        clipRef.current = tapeRef.current.slice();
       } else if (w.celebrating === 0) {
         clipRef.current = [];
-        if (w.countdown === 0) tapeRef.current = tapeRef.current.slice(-360);
+        // Play restarts from behind a countdown, so anything on the tape from
+        // before it belongs to a different passage of play. Left there, a
+        // quick goal's run-up reaches back over the restart and opens the
+        // replay with everybody teleporting to the centre circle.
+        if (w.countdown > 0 && tapeRef.current.length) tapeRef.current = [];
       }
 
       // Ball history for the trail. Kept here rather than in the world so it
@@ -505,6 +534,13 @@ export function HaxballGame({
               ? 'Draw'
               : `${TEAM_NAME[state.lastResult?.winner ?? 0]} takes the match`}
           </div>
+          {!countsForRating(onPitch, state.bots) && (
+            <div className="row-sub" style={{ marginTop: 6 }}>
+              {state.bots.red + state.bots.blue > 0
+                ? 'Computer players on the pitch, so this one is not rated.'
+                : 'Both sides need a person on them for this to be rated.'}
+            </div>
+          )}
         </div>
 
         <div className="group" style={{ padding: 14, minWidth: 260 }}>
@@ -1370,25 +1406,6 @@ function nameFor(id: string | null, profiles: Map<UUID, Profile>): string {
 }
 
 /**
- * Where in the clip to be at this point of the replay.
- *
- * Deliberately not linear: normal speed up to the shot, a crawl through the
- * strike, then a release. A replay at one speed shows you everything except
- * the bit you wanted to see.
- */
-function replayFrame(progress: number, length: number, shotIndex: number): number {
-  const last = length - 1;
-  if (last <= 0) return 0;
-
-  const slowFrom = Math.max(0, shotIndex - 22);
-  const slowTo = Math.min(last, shotIndex + 16);
-
-  if (progress < 0.5) return (progress / 0.5) * slowFrom;
-  if (progress < 0.82) return slowFrom + ((progress - 0.5) / 0.32) * (slowTo - slowFrom);
-  return slowTo + ((progress - 0.82) / 0.18) * (last - slowTo);
-}
-
-/**
  * Run `draw` with a point of the pitch pinned to a point of the screen.
  *
  * Anchoring rather than always centring is what lets the scorer sit on the
@@ -1583,18 +1600,18 @@ function drawGoalSequence(
     const local = Math.min(1, Math.max(0, (t - MOMENT_END) / (REPLAY_END - MOMENT_END)));
     const clip = tape.clip;
 
-    let shotIndex = clip.length - 1;
-    if (goal) {
-      const found = clip.findIndex((f) => f.t >= goal.shotTick);
-      if (found >= 0) shotIndex = found;
-    }
+    // How long the replay actually has on screen, in seconds. Everything about
+    // the pacing follows from this, so a practice game's short celebration
+    // gets a shorter clip rather than the same clip at five times the speed.
+    const seconds = ((REPLAY_END - MOMENT_END) * tape.total) / 60;
+    const shotTick = goal?.shotTick ?? clip[clip.length - 1].t;
+    const plan = planReplay(clip, shotTick, seconds);
 
-    // A float index, blended between neighbours — stepping whole frames at a
-    // third of speed is what made the slow motion judder.
-    const exact = replayFrame(local, clip.length, shotIndex);
-    const i = Math.min(clip.length - 2, Math.max(0, Math.floor(exact)));
+    // A tick, blended between the two tape frames either side of it — stepping
+    // whole frames at a third of speed is what made the slow motion judder.
+    const { i, k } = sampleAt(clip, tickAt(local, plan));
     const rw = tape.replayWorld;
-    blendInto(rw, clip[i], clip[i + 1], Math.min(1, Math.max(0, exact - i)));
+    blendInto(rw, clip[i], clip[i + 1], k);
     rw.celebrating = 0;
     rw.countdown = 0;
     rw.goal = null;
@@ -1634,7 +1651,7 @@ function drawGoalSequence(
     ctx.fillText(String(w.score.blue), p.w - 16, p.h - bar * 0.42);
     ctx.restore();
 
-    if (local > 0.5 && local < 0.82) {
+    if (inSlowMotion(local, plan)) {
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = '700 12px system-ui, sans-serif';
