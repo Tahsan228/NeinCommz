@@ -112,9 +112,9 @@ export const DEFAULT_RULES: Rules = {
   playerAccel: 0.14,
   playerDamping: 0.935,
   ballDamping: 0.99,
-  // A bare touch is a proper strike. Power is a bonus for shepherding the
-  // ball, not the difference between a kick and a nudge.
-  kickMin: 6.5,
+  // A bare touch is a real kick but not a shot; the gap to a full wind-up is
+  // where the whole power system lives.
+  kickMin: 5.5,
   kickMax: 13,
   // Three seconds of dribbling to reach full power. Fast enough to be worth
   // going for, slow enough that you have to actually protect the ball.
@@ -257,6 +257,15 @@ const ASSIST_WINDOW_TICKS = 60 * 8;
  * moment anyone wants to see slowed down.
  */
 const POST_ZONE = 26;
+
+/**
+ * Below this you are not dribbling, you are leaning on the ball.
+ *
+ * Power comes from running with it. Standing on top of a stationary ball and
+ * waiting was the cheapest way to a full-power shot in the game, and it made
+ * the best play "do nothing for three seconds".
+ */
+const DRIBBLE_SPEED = 0.45;
 
 /**
  * Is the ball close enough for this player to strike it?
@@ -492,10 +501,13 @@ export function step(w: World, inputs: Map<string, Input>): void {
 
     const inReach = d > 0 && d < p.r + w.ball.r + KICK_RANGE;
 
-    // Power comes from keeping the ball at your feet, not from holding a key.
-    // Walking it forward winds up a shot; losing it drops everything you had.
+    // Power comes from running with the ball, not from standing on it.
+    // Losing the ball drops everything; stopping simply stops the clock, so
+    // holding what you have while you look up is fine.
     const rate = r.chargeRate * (p.buffs.control > 0 ? CONTROL_CHARGE_MULTIPLIER : 1);
-    p.charge = inReach ? Math.min(MAX_CHARGE, p.charge + rate) : 0;
+    const dribbling = Math.hypot(p.vx, p.vy) > DRIBBLE_SPEED;
+    if (!inReach) p.charge = 0;
+    else if (dribbling) p.charge = Math.min(MAX_CHARGE, p.charge + rate);
 
     // The key is intent, and it fires the moment there is something to hit —
     // so you can run at a loose ball with it held and strike on contact.

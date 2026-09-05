@@ -312,12 +312,13 @@ glow behind the page.
 npm test
 ```
 
-270 tests covering the parts where bugs actually hide: the status engine's
+273 tests covering the parts where bugs actually hide: the status engine's
 priority rules, glyph resolution and overlap detection, time parsing and
 formatting, tic-tac-toe win detection, knockout seeding and bye propagation,
 Gartic's chain rotation (nobody should ever get their own chain twice) and its
-configurable rounds, Haxball's collisions, goal maths, charged shots and match
-limits, Elo expectation/symmetry and the coin payouts, URL detection in messages, the
+configurable rounds, Haxball's collisions, goal maths, charged shots (which
+build only while you are running with the ball, never while standing on it) and
+match limits, Elo expectation/symmetry and the coin payouts, URL detection in messages, the
 whole chess rulebook (pins, castling rights, en passant expiry, promotion, mate,
 stalemate, repetition), the bots (a perfect tic-tac-toe player must draw
 against itself; a Haxball bot must never kick towards its own goal), the
@@ -325,8 +326,9 @@ leaderboard's ordering and its rule that nobody is ever dropped from the table,
 who gets credited with a goal and an assist, what happens to a room when its
 host closes the tab (exactly one client may act on it), what each power-up
 orb actually does, that the replay camera can never look off the pitch, which
-collision the replay slows down on, and two jsdom tests — one that mounts the whole app and walks through
-the front door, and one pinning the game-room loading contract that once made
+collision the replay slows down on, and two jsdom tests — one that mounts the whole app, walks through
+the front door and pins that the front door never looks like a login to a
+password manager, and one pinning the game-room loading contract that once made
 every game unopenable.
 
 The suite pins its own `VITE_…` values, so it behaves identically on every

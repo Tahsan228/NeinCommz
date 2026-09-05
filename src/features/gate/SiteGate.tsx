@@ -23,8 +23,8 @@ export function SiteGate({ onPass }: { onPass: () => void }) {
     ref.current?.focus();
   }, []);
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = (e?: { preventDefault?: () => void }) => {
+    e?.preventDefault?.();
     if (value.trim().toLowerCase() === SITE_PASSWORD.toLowerCase()) {
       onPass();
       return;
@@ -42,21 +42,35 @@ export function SiteGate({ onPass }: { onPass: () => void }) {
         </div>
         <h1>NeinCommz</h1>
         <p>Say the word.</p>
-        <form onSubmit={submit}>
+        {/*
+          Deliberately not a <form> and deliberately not a password field.
+
+          Browsers offer to save — and worse, to *update* — anything that
+          looks like a login, so typing the shared word here kept prompting
+          people to overwrite the saved password for their actual profile.
+          A one-time-code field in a plain div is the same thing to a person
+          and nothing to a password manager.
+        */}
+        <div className="gate-row">
           <input
             ref={ref}
             className="input"
             type="password"
-            autoComplete="off"
+            name="entry-word"
+            autoComplete="one-time-code"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
             placeholder="••••"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            aria-label="Site password"
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            aria-label="Entry word"
           />
-          <button className="btn btn-accent" type="submit" disabled={!value.trim()}>
+          <button className="btn btn-accent" onClick={() => submit()} disabled={!value.trim()}>
             Enter
           </button>
-        </form>
+        </div>
         <p className="err">{wrong ? 'Not it.' : ''}</p>
       </div>
     </div>

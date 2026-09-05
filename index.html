@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#111113" />
+
+    <!-- Home-screen icons. iOS ignores the manifest's icons and looks only
+         for apple-touch-icon, and without it it pins a screenshot of the
+         page instead. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Launched from the home screen it runs without Safari's chrome, so
+         the title bar has to match the app rather than sit above it. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NeinCommz" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
     <title>NeinCommz</title>
   </head>
   <body>

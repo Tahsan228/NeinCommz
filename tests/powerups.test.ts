@@ -122,10 +122,14 @@ describe('what each one does', () => {
     const charge = (buffed: boolean) => {
       const w = withOrbs();
       w.orbs = [];
-      w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
-      w.players[0].y = w.ball.y;
       if (buffed) w.players[0].buffs.control = BUFF_TICKS;
-      for (let i = 0; i < 30; i++) step(w, new Map([['a', IDLE]]));
+      // Power only builds while moving, so this has to be a dribble.
+      for (let i = 0; i < 30; i++) {
+        w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
+        w.players[0].y = w.ball.y;
+        w.players[0].vx = 1.5;
+        step(w, new Map([['a', IDLE]]));
+      }
       return w.players[0].charge;
     };
     expect(charge(true)).toBeGreaterThan(charge(false) * 2);

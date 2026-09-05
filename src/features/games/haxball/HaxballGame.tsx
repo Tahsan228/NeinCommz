@@ -408,9 +408,14 @@ export function HaxballGame({
 
       // Freeze the tape the instant a goal goes in.
       if (w.celebrating > 0 && clipRef.current.length === 0 && tapeRef.current.length > 12) {
-        // About four seconds of build-up: long enough to show the move that
-        // led to the goal, short enough that the replay is not a highlight reel.
-        clipRef.current = tapeRef.current.slice(-240);
+        // Size the clip to the time it will be given, or it plays at whatever
+        // ratio happens to fall out. A fixed four seconds squeezed into a
+        // practice celebration ran at roughly five times speed.
+        const window = Math.round((REPLAY_END - MOMENT_END) * w.celebrating);
+        // Slow motion stretches part of the timeline, so a little less footage
+        // than the window comes out at about real speed overall.
+        const frames = Math.max(40, Math.round(window * 0.72));
+        clipRef.current = tapeRef.current.slice(-frames);
       } else if (w.celebrating === 0) {
         clipRef.current = [];
         if (w.countdown === 0) tapeRef.current = tapeRef.current.slice(-360);
@@ -738,7 +743,7 @@ function HaxLobby({
           ...state.rules,
           scoreLimit: 0,
           timeLimitSec: 0,
-          celebrationTicks: 90,
+          celebrationTicks: 180,
         },
         startedAt: new Date().toISOString(),
       },
@@ -1524,9 +1529,9 @@ function drawGoalSequence(
         ctx.stroke();
       }
 
-      // The effect erupts from the net it went into, in world space, so it
-      // stays anchored to the goal while the camera moves.
-      if (scorerId) {
+      // An own goal gets no fireworks and no catchphrase — it is announced
+      // and left alone.
+      if (scorerId && !goal?.ownGoal) {
         paintGoalEffect(
           cosmetics.equippedOf(scorerId).goalfx,
           ctx,

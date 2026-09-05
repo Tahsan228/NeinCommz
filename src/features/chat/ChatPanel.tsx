@@ -393,31 +393,48 @@ export function ChatPanel({
     pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
   };
 
-  /**
-   * Pin to the newest message.
-   *
-   * Called more than once on purpose. Setting scrollTop the moment a page of
-   * history arrives lands short, because the bubbles have not been laid out
-   * yet and the images inside them have no height — which is why opening the
-   * app left you part-way up the conversation instead of at the bottom.
-   */
+  /** Pin to the newest message. */
   const stickToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, []);
 
+  /**
+   * Hold the bottom until the conversation stops growing under us.
+   *
+   * A single scrollTop lands short: bubbles have not been laid out, avatars
+   * and images have no height yet, and the web font has not swapped in — each
+   * of which makes the list taller *after* we scrolled, leaving you a little
+   * way up from the newest message. Rather than guess at timeouts, re-pin
+   * every frame until the height has held still for a few frames, with a hard
+   * cap so this can never become a permanent loop.
+   */
+  const holdBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return () => {};
+
+    let raf = 0;
+    let settled = 0;
+    let last = -1;
+    const deadline = performance.now() + 1500;
+
+    const tick = () => {
+      const now = scrollRef.current;
+      if (!now) return;
+      now.scrollTop = now.scrollHeight;
+      settled = now.scrollHeight === last ? settled + 1 : 0;
+      last = now.scrollHeight;
+      if (settled < 4 && performance.now() < deadline) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   useEffect(() => {
     if (!pinnedRef.current && !prefs.autoScroll) return;
-    stickToBottom();
-    const frame = requestAnimationFrame(stickToBottom);
-    // One more after layout has certainly settled, for slow first paints.
-    const late = window.setTimeout(stickToBottom, 150);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(late);
-    };
-  }, [messages.length, typers.size, prefs.autoScroll, roomId, loading, stickToBottom]);
+    return holdBottom();
+  }, [messages.length, typers.size, prefs.autoScroll, roomId, loading, holdBottom]);
 
   /* -------------------------------------------------------------- send --- */
   const send = useCallback(

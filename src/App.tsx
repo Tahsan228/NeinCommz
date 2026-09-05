@@ -159,6 +159,8 @@ function Home() {
         <div className="column column-status">
           <div className="label">Who's around</div>
           <div className="panel panel-grow">
+            {/* On a phone the list is put above the dashboard by CSS order:
+                who is free right now is the reason to open this at all. */}
             <Dashboard />
             <StatusBoard />
           </div>

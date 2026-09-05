@@ -167,7 +167,7 @@
   font-size: 13.5px;
 }
 
-.gate form {
+.gate-row {
   display: flex;
   gap: 10px;
 }
@@ -2340,9 +2340,24 @@
 
 /* ------------------------------------------------- leaderboard widget --- */
 
+/* Laid out as a column in its own right: this panel is built by hand rather
+   than by <Panel>, and without these the list inside had no height of its own
+   to scroll in — it simply overflowed a panel with overflow:hidden and the
+   bottom of it could not be reached. */
 .panel-grow {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.panel-grow .status-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Momentum scrolling, and room past the last card on a phone. */
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
 }
 
 .lbw {
@@ -2568,8 +2583,23 @@
 
   /* The status column is the point of the phone layout, so it gets the room:
      the dashboard stays compact and the list of people scrolls. */
+  .column-status {
+    overflow: hidden;
+  }
   .column-status .panel-grow {
     flex: 1 1 auto;
+  }
+
+  /* People first. The weather and the clock are useful, but they are not why
+     anyone opens this on a phone between lessons — so on a narrow screen the
+     list comes first and the dashboard sits underneath it. */
+  .panel-grow .status-list {
+    order: 1;
+  }
+  .panel-grow .dash {
+    order: 2;
+    border-bottom: none;
+    border-top: 1px solid var(--hairline);
   }
   .dash {
     grid-template-columns: 1fr 1fr;

@@ -39,24 +39,66 @@ function nearBall() {
   return w;
 }
 
+/**
+ * Run with the ball for a while.
+ *
+ * Power only builds while you are actually moving, so a test that wants a
+ * wind-up has to dribble rather than stand on the ball. Each tick puts the
+ * player back at the ball's heel and keeps it running.
+ */
+function dribble(w: ReturnType<typeof kickedOff>, ticks: number, input: Input = RELEASE) {
+  for (let i = 0; i < ticks; i++) {
+    w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
+    w.players[0].y = w.ball.y;
+    w.players[0].vx = 1.5;
+    step(w, new Map([['a', input]]));
+  }
+}
+
 describe('kicking', () => {
-  it('builds power just by keeping the ball at your feet, with no key held', () => {
+  it('builds power by running with the ball, with no key held', () => {
     const w = nearBall();
-    for (let i = 0; i < 10; i++) step(w, new Map([['a', RELEASE]]));
+    dribble(w, 10);
     expect(w.players[0].charge).toBeGreaterThan(0);
-    // Nothing has been struck: power is stored, not spent.
-    expect(Math.abs(w.ball.vx)).toBeLessThan(0.01);
   });
 
-  it('caps at full power however long the ball stays there', () => {
+  it('builds nothing at all while standing on a stationary ball', () => {
+    // Waiting on top of the ball used to be the cheapest route to a
+    // full-power shot, which made the strongest play "do nothing".
     const w = nearBall();
-    for (let i = 0; i < 600; i++) step(w, new Map([['a', RELEASE]]));
+    for (let i = 0; i < 240; i++) {
+      w.players[0].vx = 0;
+      w.players[0].vy = 0;
+      step(w, new Map([['a', RELEASE]]));
+    }
+    expect(w.players[0].charge).toBe(0);
+  });
+
+  it('holds what you have while you stop to look up', () => {
+    const w = nearBall();
+    dribble(w, 60);
+    const banked = w.players[0].charge;
+    expect(banked).toBeGreaterThan(0);
+
+    for (let i = 0; i < 60; i++) {
+      w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
+      w.players[0].y = w.ball.y;
+      w.players[0].vx = 0;
+      w.players[0].vy = 0;
+      step(w, new Map([['a', RELEASE]]));
+    }
+    expect(w.players[0].charge).toBeCloseTo(banked, 5);
+  });
+
+  it('caps at full power however long you run with it', () => {
+    const w = nearBall();
+    dribble(w, 600);
     expect(w.players[0].charge).toBe(1);
   });
 
   it('loses the wind-up the moment the ball gets away', () => {
     const w = nearBall();
-    for (let i = 0; i < 20; i++) step(w, new Map([['a', RELEASE]]));
+    dribble(w, 40);
     expect(w.players[0].charge).toBeGreaterThan(0);
 
     w.players[0].x = 60;
@@ -76,18 +118,18 @@ describe('kicking', () => {
     const tap = nearBall();
     step(tap, new Map([['a', HOLD]]));
 
-    // Three seconds of dribbling is a full wind-up.
+    // Three seconds of running with it is a full wind-up.
     const wound = nearBall();
-    for (let i = 0; i < 180; i++) step(wound, new Map([['a', RELEASE]]));
+    dribble(wound, 180);
     expect(wound.players[0].charge).toBeCloseTo(1, 1);
-    step(wound, new Map([['a', HOLD]]));
+    dribble(wound, 1, HOLD);
 
     expect(wound.ball.vx).toBeGreaterThan(tap.ball.vx * 1.6);
   });
 
-  it('takes about three seconds to wind all the way up', () => {
+  it('takes about three seconds of running to wind all the way up', () => {
     const w = nearBall();
-    for (let i = 0; i < 90; i++) step(w, new Map([['a', RELEASE]]));
+    dribble(w, 90);
     // Half the time, so about half the power.
     expect(w.players[0].charge).toBeGreaterThan(0.4);
     expect(w.players[0].charge).toBeLessThan(0.6);
@@ -103,8 +145,8 @@ describe('kicking', () => {
 
   it('spends the wind-up on the shot', () => {
     const w = nearBall();
-    for (let i = 0; i < 30; i++) step(w, new Map([['a', RELEASE]]));
-    step(w, new Map([['a', HOLD]]));
+    dribble(w, 30);
+    dribble(w, 1, HOLD);
     expect(w.players[0].charge).toBe(0);
   });
 
