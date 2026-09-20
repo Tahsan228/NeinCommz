@@ -41,6 +41,39 @@ function fakeCtx(): CanvasRenderingContext2D {
   }) as unknown as CanvasRenderingContext2D;
 }
 
+/**
+ * A canvas that writes down everything asked of it.
+ *
+ * Enough to compare two paints for equality, which is the only way to check
+ * that something genuinely does not animate.
+ */
+function recordingCtx(): { ctx: CanvasRenderingContext2D; log: string[] } {
+  const log: string[] = [];
+  const gradient = { addColorStop: (...a: unknown[]) => log.push(`stop(${a.join()})`) };
+  const store: Record<string | symbol, unknown> = { globalAlpha: 1 };
+
+  const ctx = new Proxy(store, {
+    get(target, prop) {
+      if (prop === 'measureText') return () => ({ width: 40 });
+      if (prop === 'createRadialGradient' || prop === 'createLinearGradient') {
+        return (...a: unknown[]) => {
+          log.push(`${String(prop)}(${a.join()})`);
+          return gradient;
+        };
+      }
+      if (prop in target) return target[prop];
+      return (...a: unknown[]) => log.push(`${String(prop)}(${a.join()})`);
+    },
+    set(target, prop, value) {
+      log.push(`${String(prop)}=${String(value)}`);
+      target[prop] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+
+  return { ctx, log };
+}
+
 const profiles = new Map<UUID, Profile>();
 
 const cosmetics = {
@@ -143,6 +176,38 @@ describe('cosmetics', () => {
           ).not.toThrow();
         }
       }
+    }
+  });
+
+  it('paints a country flag the same whatever the clock says', () => {
+    // The shop paints a flag once and stops, because a flag does not move —
+    // two hundred animation loops for two hundred still pictures is what made
+    // the Countries tab crawl. If a flag ever gains a moving part, this is
+    // what says so rather than the card quietly freezing on frame one.
+    for (const country of COUNTRIES) {
+      const id = flagItemId(country.code);
+
+      const first = recordingCtx();
+      paintBall(id, first.ctx, 50, 50, 30, '#fff', 0);
+
+      const later = recordingCtx();
+      paintBall(id, later.ctx, 50, 50, 30, '#fff', 999);
+
+      expect(later.log, country.name).toEqual(first.log);
+    }
+  });
+
+  it('does animate the designed balls, which is why they still get a loop', () => {
+    // The other half of the rule above: these are the ones a single paint
+    // would break, so the distinction the shop draws has to be real.
+    for (const id of ['ball_football', 'ball_disco', 'ball_plasma']) {
+      const first = recordingCtx();
+      paintBall(id, first.ctx, 50, 50, 30, '#fff', 0);
+
+      const later = recordingCtx();
+      paintBall(id, later.ctx, 50, 50, 30, '#fff', 999);
+
+      expect(later.log, id).not.toEqual(first.log);
     }
   });
 

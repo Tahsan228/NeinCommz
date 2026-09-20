@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   celebrationText,
   paintBall,
@@ -7,6 +7,7 @@ import {
   type TrailPoint,
 } from './cosmetics';
 import { BANNERS, BANNER_ANIMS, paintBanner } from './banners';
+import { flagCodeOf } from './flags';
 
 const W = 190;
 const H = 84;
@@ -29,14 +30,54 @@ export function CosmeticPreview({
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
+  /**
+   * Whether this card is actually on screen.
+   *
+   * The Countries tab holds nearly two hundred cards. Every one of them used
+   * to run its own animation loop from the moment it mounted, on screen or
+   * not, which is two hundred canvases repainting sixty times a second for
+   * the sake of the four you can see. That is what made the shop crawl.
+   *
+   * Starts true where there is no observer to ask, so a browser without one
+   * gets the old behaviour rather than a grid of blank squares.
+   */
+  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || typeof IntersectionObserver === 'undefined') return;
+
+    // A generous margin, so a card is painted just before it is scrolled to
+    // rather than popping in blank underneath the cursor.
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { rootMargin: '200px' },
+    );
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+
+  /**
+   * A flag does not move, so there is nothing for a loop to show. Painting it
+   * once is not an optimisation, it is the correct amount of work.
+   */
+  const still = kind === 'ball' && flagCodeOf(id) !== null;
+
   useEffect(() => {
     const canvas = ref.current;
     const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx || !visible) return;
 
     let raf = 0;
     let tick = 0;
     const history: TrailPoint[] = [];
+
+    if (still) {
+      ctx.fillStyle = '#16221a';
+      ctx.fillRect(0, 0, W, H);
+      paintBall(id, ctx, W / 2, H / 2, 30, accent, 0);
+      return;
+    }
 
     const draw = () => {
       raf = requestAnimationFrame(draw);
@@ -115,7 +156,7 @@ export function CosmeticPreview({
 
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [id, kind, accent]);
+  }, [id, kind, accent, still, visible]);
 
   return <canvas ref={ref} width={W} height={H} className="cosmetic-preview" />;
 }
