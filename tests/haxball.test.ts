@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { effectiveRules, readState } from '../src/features/games/haxball/HaxballGame';
 import {
   BALL_R,
   CELEBRATION_TICKS,
   COUNTDOWN_TICKS,
+  PRACTICE_CELEBRATION_TICKS,
   CHARGE_PRESETS,
   DEFAULT_RULES,
   PITCH_PRESETS,
@@ -774,5 +776,44 @@ describe('the goal that wins it', () => {
       ticks.push(w.tick);
     }
     expect(new Set(ticks).size).toBe(100);
+  });
+});
+
+describe('how long the goal sequence gets', () => {
+  it('ignores a length left behind in a room that once ran practice', () => {
+    // The bug behind three separate "the replay is sped up" reports. Practice
+    // used to save its overrides into the room's rules, and a stored rule
+    // beats a default -- so those rooms kept a three-second goal sequence
+    // long after the code that wrote it was gone.
+    const poisoned = readState({ rules: { ...DEFAULT_RULES, celebrationTicks: 180 } });
+    expect(poisoned.rules.celebrationTicks).toBe(CELEBRATION_TICKS);
+
+    const ancient = readState({ rules: { celebrationTicks: 540 } });
+    expect(ancient.rules.celebrationTicks).toBe(CELEBRATION_TICKS);
+  });
+
+  it('keeps every other saved rule exactly as the host left it', () => {
+    const state = readState({
+      rules: { ...DEFAULT_RULES, scoreLimit: 3, weather: 'snow', pitchSize: 'big' },
+    });
+    expect(state.rules.scoreLimit).toBe(3);
+    expect(state.rules.weather).toBe('snow');
+    expect(state.rules.pitchSize).toBe('big');
+  });
+
+  it('still cuts it right down for a practice, without saving that anywhere', () => {
+    const state = readState({ practice: true, rules: { ...DEFAULT_RULES } });
+    // What is stored stays clean...
+    expect(state.rules.celebrationTicks).toBe(CELEBRATION_TICKS);
+    // ...and the short one is derived at the point of play.
+    expect(effectiveRules(state).celebrationTicks).toBe(PRACTICE_CELEBRATION_TICKS);
+    expect(effectiveRules(state).scoreLimit).toBe(0);
+  });
+
+  it('gives the replay a sensible run at the default length', () => {
+    // The replay act is a fixed share of the sequence, so this is the number
+    // that decides whether slow motion is possible at all.
+    const seconds = (0.92 - 0.22) * (CELEBRATION_TICKS / 60);
+    expect(seconds).toBeGreaterThan(6);
   });
 });

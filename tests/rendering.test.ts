@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { drawPitch } from '../src/features/games/haxball/HaxballGame';
-import { COUNTRIES, flagCodeOf, flagItemId, paintFlag } from '../src/features/economy/flags';
+import {
+  COUNTRIES,
+  flagCodeOf,
+  flagItemId,
+  paintFlag,
+  paintFlagDisc,
+} from '../src/features/economy/flags';
 import { BANNERS, BANNER_ANIMS, paintBanner } from '../src/features/economy/banners';
 import { paintBall, paintGoalEffect, paintTrail } from '../src/features/economy/cosmetics';
 import {
@@ -128,6 +134,53 @@ describe('painting a frame', () => {
     }
   });
 
+  it('draws the goal celebration, when the crowd is on its feet', () => {
+    const w = createWorld([{ id: 'a', team: 0 }, { id: 'b', team: 1 }]);
+    w.countdown = 0;
+    w.celebrating = 300;
+    expect(() => drawPitch(fakeCtx(), w, 'a', profiles, cosmetics)).not.toThrow();
+  });
+
+  it('keeps the crowd moving', () => {
+    // A stand that does not move reads as a border rather than as people, so
+    // "the picture changes between ticks" is the property worth holding on to.
+    const w = createWorld([{ id: 'a', team: 0 }]);
+    w.countdown = 0;
+
+    const early = recordingCtx();
+    w.tick = 100;
+    drawPitch(early.ctx, w, 'a', profiles, cosmetics);
+
+    const late = recordingCtx();
+    w.tick = 137;
+    drawPitch(late.ctx, w, 'a', profiles, cosmetics);
+
+    expect(late.log).not.toEqual(early.log);
+  });
+
+  it('gets the crowd up when a goal goes in', () => {
+    // They jump higher while a goal is being celebrated, so the same tick
+    // has to paint differently depending on whether one just went in.
+    const calm = createWorld([{ id: 'a', team: 0 }]);
+    calm.countdown = 0;
+    calm.tick = 200;
+
+    const cheering = createWorld([{ id: 'a', team: 0 }]);
+    cheering.countdown = 0;
+    cheering.tick = 200;
+    cheering.celebrating = 300;
+    // Same player positions, so only the crowd can differ.
+    cheering.players[0].x = calm.players[0].x;
+    cheering.players[0].y = calm.players[0].y;
+
+    const a = recordingCtx();
+    drawPitch(a.ctx, calm, 'a', profiles, cosmetics);
+    const b = recordingCtx();
+    drawPitch(b.ctx, cheering, 'a', profiles, cosmetics);
+
+    expect(b.log).not.toEqual(a.log);
+  });
+
   it('draws orbs of every kind, curses included', () => {
     const w = createWorld([{ id: 'a', team: 0 }], {
       ...DEFAULT_RULES,
@@ -158,12 +211,19 @@ describe('cosmetics', () => {
     }
   });
 
-  it('paints every country as a ball, by its shop id', () => {
+  it('paints every country into a player disc, by its shop id', () => {
     for (const country of COUNTRIES) {
       const id = flagItemId(country.code);
       expect(flagCodeOf(id)).toBe(country.code);
-      expect(() => paintBall(id, fakeCtx(), 50, 50, 13, '#fff', 100), id).not.toThrow();
+      expect(paintFlagDisc(fakeCtx(), 50, 50, 15, flagCodeOf(id)), id).toBe(true);
     }
+  });
+
+  it('says so rather than drawing nothing for a country it does not know', () => {
+    // The caller falls back to its ordinary fill on false, so this is the
+    // difference between an unknown code and an invisible player.
+    expect(paintFlagDisc(fakeCtx(), 0, 0, 15, 'zz')).toBe(false);
+    expect(paintFlagDisc(fakeCtx(), 0, 0, 15, null)).toBe(false);
   });
 
   it('paints every goal card in every motion, across its whole life', () => {
@@ -185,16 +245,27 @@ describe('cosmetics', () => {
     // the Countries tab crawl. If a flag ever gains a moving part, this is
     // what says so rather than the card quietly freezing on frame one.
     for (const country of COUNTRIES) {
-      const id = flagItemId(country.code);
-
       const first = recordingCtx();
-      paintBall(id, first.ctx, 50, 50, 30, '#fff', 0);
+      paintFlag(first.ctx, country.flag, 30);
 
       const later = recordingCtx();
-      paintBall(id, later.ctx, 50, 50, 30, '#fff', 999);
+      paintFlag(later.ctx, country.flag, 30);
 
       expect(later.log, country.name).toEqual(first.log);
     }
+  });
+
+  it('no longer puts a country on the ball', () => {
+    // A ball that changes nationality with possession tells you nothing about
+    // anybody, which is why this moved to the player.
+    const flagId = recordingCtx();
+    paintBall(flagItemId('br'), flagId.ctx, 50, 50, 30, '#fff', 0);
+
+    const nonsense = recordingCtx();
+    paintBall('ball_not_a_thing', nonsense.ctx, 50, 50, 30, '#fff', 0);
+
+    // Both fall through to the classic ball, so they paint identically.
+    expect(flagId.log).toEqual(nonsense.log);
   });
 
   it('does animate the designed balls, which is why they still get a loop', () => {

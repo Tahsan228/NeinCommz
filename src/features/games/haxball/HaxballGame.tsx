@@ -19,6 +19,7 @@ import {
 } from '../../economy/cosmetics';
 import { paintBanner } from '../../economy/banners';
 import { MODES, modeById, modeOf } from './modes';
+import { flagCodeOf, paintFlagDisc } from '../../economy/flags';
 import {
   BALL_R,
   CELEBRATION_TICKS,
@@ -130,12 +131,9 @@ interface HaxState {
 /**
  * The rules a match is actually played under.
  *
- * Practice used to write its overrides straight into the room's saved rules,
- * which meant the *next* real match in that room inherited a two-and-a-half
- * second goal sequence — and a goal sequence that short is the whole of the
- * "the replay is extremely sped up" complaint, because the replay is given a
- * share of it and has to cut its footage to fit. Derived here instead, so a
- * practice never leaves a mark on the room.
+ * How long the goal sequence runs is not one of them, and never was — it is a
+ * constant that depends on nothing but whether this is a practice. It lives in
+ * `Rules` only because the simulation reads its settings from one object.
  */
 export function effectiveRules(state: HaxState): Rules {
   if (!state.practice) return state.rules;
@@ -147,10 +145,32 @@ export function effectiveRules(state: HaxState): Rules {
   };
 }
 
-function readState(s: Record<string, unknown>): HaxState {
+/**
+ * Read a room's saved state.
+ *
+ * Note what happens to `celebrationTicks`: whatever is stored is thrown away.
+ *
+ * Practice used to write its overrides straight into the room's saved rules,
+ * so starting a knockabout left `celebrationTicks: 180` sitting in that room's
+ * row for ever. Deriving the practice values instead stopped *new* rooms being
+ * spoiled, but it did nothing whatsoever for the rooms already carrying it --
+ * and a stored rule wins over a default, so those rooms kept playing a
+ * three-second goal sequence with a two-second replay squeezed into it. Which
+ * is exactly the report, twice over, after two fixes that could not have
+ * touched it.
+ *
+ * A setting no host can change has no business surviving in storage, so it
+ * does not: it is overwritten on the way in, and the poison in any existing
+ * room row is simply never read.
+ */
+export function readState(s: Record<string, unknown>): HaxState {
   return {
     phase: (s.phase as HaxState['phase']) ?? 'lobby',
-    rules: { ...DEFAULT_RULES, ...((s.rules as Partial<Rules>) ?? {}) },
+    rules: {
+      ...DEFAULT_RULES,
+      ...((s.rules as Partial<Rules>) ?? {}),
+      celebrationTicks: CELEBRATION_TICKS,
+    },
     teamSize: (s.teamSize as number) ?? 2,
     bots: (s.bots as { red: number; blue: number }) ?? { red: 0, blue: 0 },
     botSkill: (s.botSkill as BotSkill) ?? 'medium',
@@ -793,7 +813,10 @@ export function HaxballGame({
 
       {iAmPlaying && <TouchControls onInput={sendInput} current={myInputRef} />}
 
-      <div style={{ fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center', lineHeight: 1.6, maxWidth: 560 }}>
+      <div
+        className="hax-hints"
+        style={{ fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center', lineHeight: 1.6, maxWidth: 560 }}
+      >
         <b>WASD</b> or arrows to move · <b>Space</b> kicks, and the longer the ball
         stays at your feet the harder it goes
         <br />
@@ -1590,24 +1613,54 @@ export function drawPitch(
     const name = isBot(pl.id) ? botName(pl.id) : profiles.get(pl.id)?.display_name;
     const base = TEAM_COLOR[pl.team];
 
+    // A country goes on the player, because a player is the one thing on the
+    // pitch that stays the same person all match. Worn on the ball it changed
+    // hands with possession and told you nothing about anybody.
+    const wearing = cosmetics ? paintFlagDisc(ctx, pl.x, pl.y, PLAYER_R, flagCodeOf(cosmetics.equippedOf(pl.id).flag ?? '')) : false;
+
     ctx.beginPath();
     ctx.arc(pl.x, pl.y, PLAYER_R, 0, Math.PI * 2);
-    const g = ctx.createRadialGradient(pl.x - 4, pl.y - 5, 2, pl.x, pl.y, PLAYER_R);
-    // Holding the kick key pales the disc, which is how you read intent from
-    // across the pitch without any text.
-    g.addColorStop(0, lighten(base, pl.kickHeld ? 130 : 60));
-    g.addColorStop(1, pl.kickHeld ? lighten(base, 80) : base);
-    ctx.fillStyle = g;
-    ctx.fill();
+
+    if (wearing) {
+      // The flag is the fill, so intent has to be shown some other way: a
+      // wash of the team colour that lifts when the kick key goes down.
+      ctx.fillStyle = withAlpha(base, pl.kickHeld ? 0.08 : 0.28);
+      ctx.fill();
+      if (pl.kickHeld) {
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        ctx.fill();
+      }
+    } else {
+      const g = ctx.createRadialGradient(pl.x - 4, pl.y - 5, 2, pl.x, pl.y, PLAYER_R);
+      // Holding the kick key pales the disc, which is how you read intent from
+      // across the pitch without any text.
+      g.addColorStop(0, lighten(base, pl.kickHeld ? 130 : 60));
+      g.addColorStop(1, pl.kickHeld ? lighten(base, 80) : base);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+
     const cursed =
       pl.buffs.slow > 0 || pl.buffs.reverse > 0 || pl.buffs.butter > 0 || pl.buffs.blind > 0;
-    ctx.lineWidth = pl.id === me ? 3 : 2;
-    ctx.strokeStyle = cursed
-      ? '#b06bff'
-      : pl.id === me
-        ? '#ffffff'
-        : 'rgba(0,0,0,0.45)';
-    ctx.stroke();
+
+    // Which side someone is on must survive whatever they are wearing, so a
+    // flag gets a heavier ring in the team colour rather than a thin dark one.
+    if (wearing) {
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = cursed ? '#b06bff' : base;
+      ctx.stroke();
+      if (pl.id === me) {
+        ctx.beginPath();
+        ctx.arc(pl.x, pl.y, PLAYER_R + 2.4, 0, Math.PI * 2);
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      }
+    } else {
+      ctx.lineWidth = pl.id === me ? 3 : 2;
+      ctx.strokeStyle = cursed ? '#b06bff' : pl.id === me ? '#ffffff' : 'rgba(0,0,0,0.45)';
+      ctx.stroke();
+    }
 
     // Charge ring: fills clockwise as the shot builds.
     if (pl.charge > 0.01) {
@@ -1627,8 +1680,21 @@ export function drawPitch(
     ctx.font = '700 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = pl.kickHeld ? 'rgba(30,20,20,0.85)' : 'rgba(255,255,255,0.92)';
-    ctx.fillText(initials(name), pl.x, pl.y + 0.5);
+    // Over a flag the initials need their own backing, because a flag can be
+    // any colour at all underneath them.
+    if (wearing) {
+      shadowed(
+        ctx,
+        () => {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(initials(name), pl.x, pl.y + 0.5);
+        },
+        4,
+      );
+    } else {
+      ctx.fillStyle = pl.kickHeld ? 'rgba(30,20,20,0.85)' : 'rgba(255,255,255,0.92)';
+      ctx.fillText(initials(name), pl.x, pl.y + 0.5);
+    }
     ctx.textBaseline = 'alphabetic';
 
     if (name) {
@@ -1747,39 +1813,59 @@ function drawStadium(ctx: CanvasRenderingContext2D, w: World): void {
   // to build a stadium in, and every band below is a fraction of it so the
   // three pitch sizes all look like the same ground.
   const room = SURROUND;
-  const crowd = room * 0.34;
-  const boardW = room * 0.24;
-  const apron = room * 0.66;
+  const crowd = room * 0.52;
+  const boardW = room * 0.18;
+  const apron = room * 0.44;
 
   ctx.fillStyle = '#0d1116';
   ctx.fillRect(0, 0, p.w, p.h);
 
-  // Terracing: concentric bands of lighter tone, which read as a crowd from
-  // the distance this is seen at.
-  const rows = 4;
-  for (let row = 0; row < rows; row++) {
-    const inset = (row * crowd) / rows;
-    const band = crowd / rows - 1;
-    ctx.fillStyle = `rgba(255,255,255,${0.035 + row * 0.016})`;
-    ctx.fillRect(inset, inset, p.w - inset * 2, band);
-    ctx.fillRect(inset, p.h - inset - band, p.w - inset * 2, band);
-    ctx.fillRect(inset, inset, band, p.h - inset * 2);
-    ctx.fillRect(p.w - inset - band, inset, band, p.h - inset * 2);
+  // Terracing, and a crowd on it.
+  //
+  // Drawn as people rather than as a texture, because a stand full of nobody
+  // reads as a border. Each one has its own phase, so the stand ripples
+  // instead of pulsing in time, and they all get up when a goal goes in.
+  const excited = w.celebrating > 0 ? 1 : w.countdown > 0 ? 0.35 : 0;
+  const bounce = 1.4 + excited * 7;
+
+  for (let row = 0; row < 3; row++) {
+    const inset = 5 + row * (crowd / 3);
+    ctx.fillStyle = `rgba(255,255,255,${0.05 + row * 0.02})`;
+    ctx.fillRect(inset - 4, inset - 4, p.w - (inset - 4) * 2, crowd / 3);
+    ctx.fillRect(inset - 4, p.h - inset - crowd / 3 + 4, p.w - (inset - 4) * 2, crowd / 3);
   }
 
-  // A scattering of brighter seats, so the crowd is not a flat wash. Fixed
-  // rather than random, or it would crawl from frame to frame.
-  for (let i = 0; i < 140; i++) {
-    const a = Math.sin(i * 12.9898) * 43758.5453;
-    const b = Math.sin(i * 78.233) * 43758.5453;
-    const fx = a - Math.floor(a);
-    const fy = b - Math.floor(b);
-    const depth = 2 + fy * (crowd - 6);
-    const along = i % 2 === 0;
-    const x = along ? fx * p.w : fy < 0.5 ? depth : p.w - depth;
-    const y = along ? (fx < 0.5 ? depth : p.h - depth) : fx * p.h;
-    ctx.fillStyle = `hsla(${Math.floor(fy * 360)} 55% 62% / 0.3)`;
-    ctx.fillRect(x, y, 3.5, 3.5);
+  // One walk along all four sides per row, so the corners fill in naturally.
+  const spacing = 12;
+  for (let row = 0; row < 3; row++) {
+    const depth = 7 + row * (crowd / 3);
+    const backRow = row * 0.18;
+
+    for (let side = 0; side < 4; side++) {
+      const vertical = side > 1;
+      const span = vertical ? p.h : p.w;
+      const count = Math.floor(span / spacing);
+
+      for (let i = 0; i < count; i++) {
+        // A fixed pseudo-random per seat: colour, phase and a little jitter,
+        // none of which may change from frame to frame or the crowd crawls.
+        const seed = side * 977 + row * 313 + i * 37;
+        const r1 = fixedRandom(seed);
+        const r2 = fixedRandom(seed + 1);
+        if (r1 > 0.94) continue; // a few empty seats
+
+        const along = i * spacing + spacing / 2 + (r2 - 0.5) * 4;
+        const hop = Math.abs(Math.sin(w.tick / 9 + seed)) * bounce * (1 - backRow);
+
+        const x = vertical ? (side === 2 ? depth : p.w - depth) : along;
+        const y = vertical ? along : side === 0 ? depth : p.h - depth;
+        // Everyone jumps away from the pitch edge they are standing at.
+        const lift = vertical ? 0 : side === 0 ? -hop : hop;
+        const liftX = vertical ? (side === 2 ? -hop : hop) : 0;
+
+        paintSpectator(ctx, x + liftX, y + lift, r1, r2, 0.55 - backRow);
+      }
+    }
   }
 
   // The apron between the crowd and the grass.
@@ -1840,6 +1926,33 @@ function drawStadium(ctx: CanvasRenderingContext2D, w: World): void {
   const endLength = p.goalHeight + boardW * 2;
   board(backLeft - boardW, p.h / 2, endLength, true, slot + 2);
   board(backRight + boardW, p.h / 2, endLength, true, slot + 3);
+}
+
+
+/** A fixed pseudo-random in 0..1. The same seat gets the same person for ever. */
+function fixedRandom(seed: number): number {
+  const x = Math.sin(seed * 127.1) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** One person in the stand: a head, a body, and a shirt somebody chose. */
+function paintSpectator(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r1: number,
+  r2: number,
+  alpha: number,
+): void {
+  // Shirts lean towards the two team colours, because a real stand does.
+  const hue = r2 < 0.42 ? 4 + r1 * 14 : r2 < 0.84 ? 205 + r1 * 20 : r1 * 360;
+  ctx.fillStyle = `hsla(${hue} ${50 + r1 * 30}% ${48 + r2 * 18}% / ${alpha})`;
+  ctx.fillRect(x - 2.5, y - 1, 5, 6);
+
+  ctx.beginPath();
+  ctx.arc(x, y - 3.2, 2.1, 0, Math.PI * 2);
+  ctx.fillStyle = `hsla(30 ${28 + r2 * 20}% ${34 + r1 * 34}% / ${alpha + 0.15})`;
+  ctx.fill();
 }
 
 /* --------------------------------------------------- weather + disasters -- */

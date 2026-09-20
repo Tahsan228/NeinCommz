@@ -91,7 +91,13 @@ button {
   border-radius: var(--r-panel);
   box-shadow: var(--lift-2);
   border: 1px solid var(--edge);
-  overflow: hidden;
+  /* Clipped across, scrollable down. Zoom the page in far enough and a panel
+     runs out of height long before the layout does — with plain `hidden` the
+     bottom of it simply cannot be reached, which is not something a card may
+     do to its own contents. The horizontal axis stays hidden so the rounded
+     corners still clip. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
 }
 
 .panel::before {
@@ -109,7 +115,11 @@ button {
   border-radius: var(--r-card);
   box-shadow: var(--lift-1);
   border: 1px solid var(--edge);
-  overflow: hidden;
+  /* Same rule as .panel: a settings card that outgrows the window scrolls
+     rather than hiding its last few rows. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  max-height: 100%;
 }
 
 .row {

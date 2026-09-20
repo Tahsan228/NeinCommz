@@ -29,7 +29,7 @@ export interface Pitch {
  * out of the margin, so anything less than this leaves the boards drawn on
  * top of the netting.
  */
-export const SURROUND = 56;
+export const SURROUND = 74;
 
 function pitchOf(play: number, tall: number, goalHeight: number, goalDepth: number): Pitch {
   const pad = goalDepth + SURROUND;
@@ -138,7 +138,7 @@ export const COUNTDOWN_TICKS = 180;
  * How long the goal sequence runs: a beat on the scorer, the replay, then the
  * fade. Long, because it is meant to be watched rather than sat through.
  */
-export const CELEBRATION_TICKS = 60 * 11;
+export const CELEBRATION_TICKS = 60 * 13;
 
 /** A goal in practice is not a broadcast moment; get back to kicking. */
 export const PRACTICE_CELEBRATION_TICKS = 150;

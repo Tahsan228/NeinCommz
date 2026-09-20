@@ -291,14 +291,42 @@ export const COUNTRIES: { code: string; name: string; flag: Flag }[] = [
 
 export const COUNTRY_BY_CODE = new Map(COUNTRIES.map((c) => [c.code, c]));
 
-/** The shop item id a country's ball is sold under. */
+/** The shop item id a country is sold under. */
 export function flagItemId(code: string): string {
-  return `ball_flag_${code}`;
+  return `flag_${code}`;
 }
 
-/** And back again — null for anything that is not a flag ball. */
+/** And back again — null for anything that is not a country. */
 export function flagCodeOf(itemId: string): string | null {
-  return itemId.startsWith('ball_flag_') ? itemId.slice('ball_flag_'.length) : null;
+  return itemId.startsWith('flag_') ? itemId.slice('flag_'.length) : null;
+}
+
+/**
+ * Paint a country into a disc, which is where a flag belongs.
+ *
+ * A flag on the ball changed hands every time possession did and told you
+ * nothing about anybody; on a player it is the one thing on the pitch that
+ * says who that circle is. Returns false for a code nobody recognises, so the
+ * caller can fall back to its ordinary fill rather than draw nothing.
+ */
+export function paintFlagDisc(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  code: string | null,
+): boolean {
+  const country = code ? COUNTRY_BY_CODE.get(code) : undefined;
+  if (!country) return false;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  paintFlag(ctx, country.flag, r);
+  ctx.restore();
+  return true;
 }
 
 /* ------------------------------------------------------------- rendering - */

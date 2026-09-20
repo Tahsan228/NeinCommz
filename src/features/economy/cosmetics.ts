@@ -7,8 +7,6 @@
  * crashing the render loop, which matters because this runs 60 times a second.
  */
 
-import { COUNTRY_BY_CODE, flagCodeOf, paintFlag } from './flags';
-
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
 export const RARITY_COLOR: Record<Rarity, string> = {
@@ -685,13 +683,7 @@ export function paintBall(
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.clip();
-  // A country ball is described rather than painted: `flags.ts` holds the
-  // whole set as bands plus marks, so it draws at any size and adds nothing
-  // to the bundle beyond its own table.
-  const code = flagCodeOf(id ?? '');
-  const country = code ? COUNTRY_BY_CODE.get(code) : undefined;
-  if (country) paintFlag(ctx, country.flag, r);
-  else (BALLS[id ?? 'ball_classic'] ?? BALLS.ball_classic)(ctx, r, accent, tick);
+  (BALLS[id ?? 'ball_classic'] ?? BALLS.ball_classic)(ctx, r, accent, tick);
   ctx.restore();
 
   ctx.beginPath();

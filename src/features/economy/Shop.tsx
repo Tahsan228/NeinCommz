@@ -4,11 +4,10 @@ import { useEconomy, type ShopItem } from '../../state/economy';
 import { Modal } from '../../components/ui';
 import { Icon, type IconName } from '../../components/Icon';
 import { RARITY_COLOR, type Rarity } from './cosmetics';
-import { flagCodeOf } from './flags';
 import { CosmeticPreview } from './CosmeticPreview';
 
 /** What the database calls each family of item. */
-export type Kind = 'trail' | 'goalfx' | 'celebration' | 'ball' | 'banner' | 'banneranim';
+export type Kind = 'trail' | 'goalfx' | 'celebration' | 'ball' | 'banner' | 'banneranim' | 'flag';
 
 /**
  * A tab in the shop.
@@ -33,15 +32,13 @@ const KINDS: {
     label: 'Balls',
     icon: 'football',
     blurb: 'How the ball looks while you are on the pitch.',
-    only: (i) => !flagCodeOf(i.id),
   },
   {
     id: 'country',
-    kind: 'ball',
+    kind: 'flag',
     label: 'Countries',
-    icon: 'circle',
-    blurb: 'Every country there is, painted onto the ball.',
-    only: (i) => Boolean(flagCodeOf(i.id)),
+    icon: 'users',
+    blurb: 'Your country, worn on your player. Your team colour stays as the ring.',
     search: true,
   },
   {

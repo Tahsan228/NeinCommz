@@ -7,7 +7,7 @@ import {
   type TrailPoint,
 } from './cosmetics';
 import { BANNERS, BANNER_ANIMS, paintBanner } from './banners';
-import { flagCodeOf } from './flags';
+import { flagCodeOf, paintFlagDisc } from './flags';
 
 const W = 190;
 const H = 84;
@@ -25,7 +25,7 @@ export function CosmeticPreview({
   accent,
 }: {
   id: string;
-  kind: 'trail' | 'goalfx' | 'celebration' | 'ball' | 'banner' | 'banneranim';
+  kind: 'trail' | 'goalfx' | 'celebration' | 'ball' | 'banner' | 'banneranim' | 'flag';
   accent: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -61,7 +61,7 @@ export function CosmeticPreview({
    * A flag does not move, so there is nothing for a loop to show. Painting it
    * once is not an optimisation, it is the correct amount of work.
    */
-  const still = kind === 'ball' && flagCodeOf(id) !== null;
+  const still = kind === 'flag';
 
   useEffect(() => {
     const canvas = ref.current;
@@ -73,9 +73,16 @@ export function CosmeticPreview({
     const history: TrailPoint[] = [];
 
     if (still) {
+      // Shown the way it is worn: a player disc, ringed in a team colour.
       ctx.fillStyle = '#16221a';
       ctx.fillRect(0, 0, W, H);
-      paintBall(id, ctx, W / 2, H / 2, 30, accent, 0);
+      const r = 27;
+      paintFlagDisc(ctx, W / 2, H / 2, r, flagCodeOf(id));
+      ctx.beginPath();
+      ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2);
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = accent;
+      ctx.stroke();
       return;
     }
 
