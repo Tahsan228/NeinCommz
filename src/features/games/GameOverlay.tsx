@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UUID } from '../../lib/types';
 import { useSession } from '../../state/session';
 import { presenceOf, useDirectory } from '../../state/directory';
 import { Avatar, Spinner } from '../../components/ui';
 import { Icon } from '../../components/Icon';
-import { cancelSession, gameMeta, invite, leaveSession } from './lobby';
+import { cancelSession, gameMeta, invite, leaveSession, touchSession } from './lobby';
 import { RosterChip, useGameRoom } from './room';
 import { TicTacToeGame } from './tictactoe/TicTacToeGame';
 import { GarticGame } from './gartic/GarticGame';
@@ -15,6 +15,8 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
   const { profile } = useSession();
   const { byId, profiles, presence } = useDirectory();
   const { session, players, loading } = useGameRoom(sessionId);
+  /** What goes fullscreen: the whole overlay, bar and all. */
+  const stageRef = useRef<HTMLDivElement>(null);
   const [invitesOpen, setInvitesOpen] = useState(false);
   const [invited, setInvited] = useState<Set<UUID>>(new Set());
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -29,12 +31,43 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Arrow keys drive Haxball, so only Escape gets through here.
-      if (e.key === 'Escape') onClose();
+      // Arrow keys drive Haxball and F is fullscreen, so only Escape gets
+      // through here — and only when the browser is not already using it to
+      // leave fullscreen.
+      if (e.key === 'Escape' && !document.fullscreenElement) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  /* ------------------------------------------------------- still here ---- */
+  // Rooms are swept up once nothing has touched them for a while. A match can
+  // run a long time without writing any state, so having it open on screen
+  // has to count as activity or a long game would tidy itself away.
+  useEffect(() => {
+    const beat = () => void touchSession(sessionId).catch(() => {});
+    beat();
+    const id = window.setInterval(beat, 4 * 60_000);
+    return () => window.clearInterval(id);
+  }, [sessionId]);
+
+  /* -------------------------------------------------------- fullscreen --- */
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = () => {
+    const el = stageRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    // Safari on iOS has no element fullscreen at all, so this is offered
+    // rather than assumed: if the promise rejects the page simply stays put.
+    else void el.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+  };
 
   if (!profile) return null;
 
@@ -72,7 +105,7 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
   };
 
   return (
-    <div className="game-overlay">
+    <div className="game-overlay" ref={stageRef} data-fullscreen={fullscreen}>
       <div className="game-bar">
         <div className="lobby-icon">
           <Icon name={meta.icon} size={18} />
@@ -154,9 +187,19 @@ export function GameOverlay({ sessionId, onClose }: { sessionId: UUID; onClose: 
             </button>
           ))}
 
+        <button
+          className="btn btn-sm"
+          onClick={toggleFullscreen}
+          title={fullscreen ? 'Leave fullscreen' : 'Play fullscreen'}
+          aria-pressed={fullscreen}
+        >
+          <Icon name={fullscreen ? 'minimize' : 'maximize'} size={15} />
+          <span className="btn-label">{fullscreen ? 'Exit' : 'Fullscreen'}</span>
+        </button>
+
         <button className="btn btn-sm" onClick={() => void leave()} title="Leave, keep the room open">
           <Icon name="logout" size={15} />
-          Leave
+          <span className="btn-label">Leave</span>
         </button>
         <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Back to chat">
           <Icon name="x" size={17} />

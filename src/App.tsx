@@ -78,9 +78,11 @@ function Home() {
   const { tapLogo, armed } = useSecret();
   const [settings, setSettings] = useState(false);
   const [shop, setShop] = useState(false);
-  // Phones get a two-tab layout instead of three columns; games are left out
-  // entirely, because none of them are playable with a thumb on a 6in screen.
-  const [mobileTab, setMobileTab] = useState<'people' | 'chat'>('people');
+  // Phones get one column at a time instead of three side by side. Games are
+  // in the switcher now: the lobby was always perfectly usable with a thumb,
+  // and Haxball has on-screen controls, so leaving the tab out only meant you
+  // could not open a room from your phone.
+  const [mobileTab, setMobileTab] = useState<'people' | 'chat' | 'games'>('people');
   const [boards, setBoards] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
@@ -134,7 +136,7 @@ function Home() {
           onClick={() => setMobileTab('people')}
         >
           <Icon name="users" size={16} />
-          Who's around
+          <span>Around</span>
         </button>
         <button
           role="tab"
@@ -143,7 +145,16 @@ function Home() {
           onClick={() => setMobileTab('chat')}
         >
           <Icon name="message" size={16} />
-          Chat
+          <span>Chat</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={mobileTab === 'games'}
+          data-on={mobileTab === 'games'}
+          onClick={() => setMobileTab('games')}
+        >
+          <Icon name="play" size={16} />
+          <span>Games</span>
         </button>
       </nav>
 

@@ -143,11 +143,40 @@ export async function createSession(game: GameId, hostId: UUID): Promise<GameSes
   return data as GameSession;
 }
 
+/** The team number that means "watching rather than playing". */
+export const SPECTATOR_TEAM = 2;
+
+export class MatchInProgress extends Error {
+  constructor() {
+    super('That match has already started.');
+    this.name = 'MatchInProgress';
+  }
+}
+
+/**
+ * Take a seat in a room.
+ *
+ * A match already under way will not take newcomers. It cannot: the roster is
+ * what the simulation is built from, so somebody walking in halfway through
+ * used to rebuild the world and restart the match for everybody in it. People
+ * who were already in the room can still reopen it — this only stops a new
+ * arrival — and they arrive on the bench rather than on a team, so rejoining
+ * a live match never reshuffles the sides either.
+ */
 export async function joinSession(sessionId: UUID, profileId: UUID): Promise<void> {
-  const { data: existing } = await supabase
-    .from('game_players')
-    .select('profile_id')
-    .eq('session_id', sessionId);
+  const [{ data: session }, { data: existing }] = await Promise.all([
+    supabase.from('game_sessions').select('status').eq('id', sessionId).maybeSingle(),
+    supabase.from('game_players').select('profile_id').eq('session_id', sessionId),
+  ]);
+
+  const already = (existing ?? []).some(
+    (p) => (p as { profile_id: UUID }).profile_id === profileId,
+  );
+  const live = (session as { status?: string } | null)?.status === 'active';
+
+  if (live && !already) throw new MatchInProgress();
+  if (already) return;
+
   const seat = existing?.length ?? 0;
 
   // Two people tapping Join at once would otherwise fight over the same seat;
@@ -155,9 +184,24 @@ export async function joinSession(sessionId: UUID, profileId: UUID): Promise<voi
   await supabase
     .from('game_players')
     .upsert(
-      { session_id: sessionId, profile_id: profileId, seat, team: seat % 2 },
+      { session_id: sessionId, profile_id: profileId, seat, team: live ? SPECTATOR_TEAM : seat % 2 },
       { onConflict: 'session_id,profile_id', ignoreDuplicates: true },
     );
+}
+
+/**
+ * Say that somebody still has this room open.
+ *
+ * Rooms are swept up once nothing has touched them for a while, and a match
+ * in progress can go a long time without writing any state — so having the
+ * room open has to count as activity in its own right, or a long game would
+ * tidy itself away underneath the people playing it.
+ */
+export async function touchSession(sessionId: UUID): Promise<void> {
+  await supabase
+    .from('game_sessions')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', sessionId);
 }
 
 export async function leaveSession(sessionId: UUID, profileId: UUID): Promise<void> {

@@ -29,6 +29,8 @@ export type IconName =
   | 'check'
   | 'logout'
   | 'ban'
+  | 'maximize'
+  | 'minimize'
   | 'play'
   | 'upload'
   | 'key'
@@ -143,6 +145,8 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   check: <path d="m5 13 4.5 4.5L19 7" />,
   logout: <path d="M15 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h11" />,
+  maximize: <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />,
+  minimize: <path d="M3 8h3a2 2 0 0 0 2-2V3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M21 16h-3a2 2 0 0 0-2 2v3" />,
   ban: (
     <>
       <circle cx="12" cy="12" r="9" />

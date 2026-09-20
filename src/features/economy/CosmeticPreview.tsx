@@ -6,6 +6,7 @@ import {
   paintTrail,
   type TrailPoint,
 } from './cosmetics';
+import { BANNERS, BANNER_ANIMS, paintBanner } from './banners';
 
 const W = 190;
 const H = 84;
@@ -23,7 +24,7 @@ export function CosmeticPreview({
   accent,
 }: {
   id: string;
-  kind: 'trail' | 'goalfx' | 'celebration' | 'ball';
+  kind: 'trail' | 'goalfx' | 'celebration' | 'ball' | 'banner' | 'banneranim';
   accent: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -75,6 +76,27 @@ export function CosmeticPreview({
           ctx.font = '700 15px system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('GOAL', W / 2, H / 2 + 5);
+        }
+      } else if (kind === 'banner' || kind === 'banneranim') {
+        // The card as it actually arrives: the same pop-in, hold and fade the
+        // pitch gives it, looped so the entrance can be watched more than once.
+        const cycle = (tick % 260) / 260;
+        // A motion swatch shows a stand-in card; a card swatch shows it still.
+        const banner = kind === 'banner' ? id : 'ban_trophy';
+        const anim = kind === 'banneranim' ? id : 'anim_still';
+        if (!BANNERS[banner]?.glyph) {
+          ctx.fillStyle = 'rgba(255,255,255,0.45)';
+          ctx.font = '600 13px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('— no card —', W / 2, H / 2 + 5);
+        } else {
+          paintBanner(banner, anim, ctx, W + 34, H * 1.9, cycle, tick, accent, 'You');
+          if (kind === 'banneranim') {
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.font = '700 11px system-ui, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(BANNER_ANIMS[id]?.label ?? '', 8, H - 8);
+          }
         }
       } else {
         const text = celebrationText(id);

@@ -3,14 +3,22 @@ import {
   BALL_R,
   CELEBRATION_TICKS,
   COUNTDOWN_TICKS,
+  CHARGE_PRESETS,
   DEFAULT_RULES,
+  PITCH_PRESETS,
   PLAYER_R,
+  POST_R,
   bounds,
   canKick,
+  confineBall,
   confinePlayer,
   createWorld,
   describeGoal,
+  kickoffPositions,
+  posts,
+  ricochet,
   step,
+  type HaxPlayer,
   type Input,
   type Rules,
 } from '../src/features/games/haxball/physics';
@@ -62,32 +70,32 @@ describe('kicking', () => {
     expect(w.players[0].charge).toBeGreaterThan(0);
   });
 
-  it('builds nothing at all while standing on a stationary ball', () => {
-    // Waiting on top of the ball used to be the cheapest route to a
-    // full-power shot, which made the strongest play "do nothing".
+  it('keeps building while you stand still with the ball at your feet', () => {
+    // Requiring movement made the meter stall the moment you stopped to look
+    // up with the ball still yours, which reads as the bar being broken.
     const w = nearBall();
     for (let i = 0; i < 240; i++) {
       w.players[0].vx = 0;
       w.players[0].vy = 0;
       step(w, new Map([['a', RELEASE]]));
     }
-    expect(w.players[0].charge).toBe(0);
+    expect(w.players[0].charge).toBe(1);
   });
 
-  it('holds what you have while you stop to look up', () => {
+  it('carries on from where it was when you stop to look up', () => {
     const w = nearBall();
     dribble(w, 60);
     const banked = w.players[0].charge;
     expect(banked).toBeGreaterThan(0);
 
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 30; i++) {
       w.players[0].x = w.ball.x - (PLAYER_R + BALL_R + 2);
       w.players[0].y = w.ball.y;
       w.players[0].vx = 0;
       w.players[0].vy = 0;
       step(w, new Map([['a', RELEASE]]));
     }
-    expect(w.players[0].charge).toBeCloseTo(banked, 5);
+    expect(w.players[0].charge).toBeGreaterThan(banked);
   });
 
   it('caps at full power however long you run with it', () => {
@@ -327,65 +335,190 @@ describe('reach', () => {
   });
 });
 
-describe('players in the goal', () => {
-  it('lets a player stand behind the goal line between the posts', () => {
+describe('players off the pitch', () => {
+  it('lets a player stand deep inside the net', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
     const { left, goalTop, goalBottom } = bounds(w.pitch);
     const p = w.players[0];
 
-    // Aim for deep inside the net, level with the middle of the mouth.
     p.y = (goalTop + goalBottom) / 2;
-    p.x = left - 200;
+    p.x = left - w.pitch.goalDepth + 4;
     confinePlayer(p, w.pitch);
 
-    // Held at the netting, not shoved back onto the pitch.
     expect(p.x).toBeLessThan(left);
-    expect(p.x).toBeCloseTo(left - w.pitch.goalDepth + PLAYER_R, 5);
   });
 
-  it('still keeps a player out of the wall away from the mouth', () => {
+  it('lets a player go round the back of the goal', () => {
+    // Out of bounds is allowed now — it is the ball that has to stay in play.
     const w = kickedOff([{ id: 'a', team: 0 }]);
     const { left, top } = bounds(w.pitch);
     const p = w.players[0];
 
     p.y = top + 30; // well above the goal mouth
-    p.x = left - 200;
+    p.x = left - 20;
     confinePlayer(p, w.pitch);
 
-    expect(p.x).toBeCloseTo(left + PLAYER_R, 5);
+    expect(p.x).toBeCloseTo(left - 20, 5);
   });
 
-  it('treats the posts as the walls once a player is inside the net', () => {
+  it('stops at the edge of the ground, and nowhere before it', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
-    const { left, goalTop, goalBottom } = bounds(w.pitch);
     const p = w.players[0];
 
-    p.y = (goalTop + goalBottom) / 2;
-    p.x = left - w.pitch.goalDepth + PLAYER_R; // inside the goal
-    p.y = goalTop - 50; // try to slide out through the side netting
+    p.x = -400;
+    p.y = w.pitch.h + 400;
     confinePlayer(p, w.pitch);
 
-    // Being out of the mouth pushes them back onto the pitch rather than
-    // letting them wander behind the goal.
-    expect(p.x).toBeGreaterThanOrEqual(left);
+    expect(p.x).toBeCloseTo(PLAYER_R, 5);
+    expect(p.y).toBeCloseTo(w.pitch.h - PLAYER_R, 5);
   });
 
   it('gives both ends the same freedom', () => {
     const w = kickedOff([{ id: 'a', team: 1 }]);
-    const { right, goalTop, goalBottom } = bounds(w.pitch);
+    const { right } = bounds(w.pitch);
     const p = w.players[0];
 
-    p.y = (goalTop + goalBottom) / 2;
-    p.x = right + 200;
+    p.y = w.pitch.h / 2;
+    p.x = right + w.pitch.goalDepth;
     confinePlayer(p, w.pitch);
 
     expect(p.x).toBeGreaterThan(right);
-    expect(p.x).toBeCloseTo(right + w.pitch.goalDepth - PLAYER_R, 5);
   });
 
   it('has a mouth wide enough for two players to share', () => {
     const w = kickedOff([{ id: 'a', team: 0 }]);
     expect(w.pitch.goalHeight).toBeGreaterThan(PLAYER_R * 4);
+  });
+
+  it('leaves room behind each goal for the stadium', () => {
+    // The netting used to be drawn past the edge of the canvas, which is what
+    // smeared the goal whenever the replay camera looked that way.
+    for (const pitch of Object.values(PITCH_PRESETS)) {
+      expect(pitch.pad).toBeGreaterThan(pitch.goalDepth);
+    }
+  });
+});
+
+describe('the woodwork', () => {
+  function ball(x: number, y: number, vx: number, vy: number) {
+    return { x, y, vx, vy, r: BALL_R, m: 0.55 };
+  }
+
+  it('puts a post at each corner of each mouth', () => {
+    const pitch = PITCH_PRESETS.normal;
+    const { left, right, goalTop, goalBottom } = bounds(pitch);
+    expect(posts(pitch)).toEqual([
+      { x: left, y: goalTop },
+      { x: left, y: goalBottom },
+      { x: right, y: goalTop },
+      { x: right, y: goalBottom },
+    ]);
+  });
+
+  it('sends a ball back off the post rather than nudging it past', () => {
+    // The old posts were a corner in a polyline the wall check knew nothing
+    // about, so the ball was shifted a little and carried on.
+    const pitch = PITCH_PRESETS.normal;
+    const { right, goalTop } = bounds(pitch);
+    const b = ball(right - 2, goalTop - 2, 9, 1);
+
+    expect(ricochet(b, pitch)).toBe(true);
+    expect(b.vx).toBeLessThan(0);
+    expect(Math.hypot(b.x - right, b.y - goalTop)).toBeGreaterThanOrEqual(BALL_R + POST_R - 0.001);
+  });
+
+  it('leaves a ball through the middle of the mouth alone', () => {
+    const pitch = PITCH_PRESETS.normal;
+    const { right, goalTop, goalBottom } = bounds(pitch);
+    const b = ball(right - 2, (goalTop + goalBottom) / 2, 9, 0);
+
+    expect(ricochet(b, pitch)).toBe(false);
+    expect(b.vx).toBe(9);
+  });
+
+  it('still counts a goal through the middle', () => {
+    const pitch = PITCH_PRESETS.normal;
+    const { right, goalTop, goalBottom } = bounds(pitch);
+    const b = ball(right + BALL_R + 2, (goalTop + goalBottom) / 2, 9, 0);
+    expect(confineBall(b, pitch)).toBe(0);
+  });
+});
+
+describe('the kickoff', () => {
+  function line(teams: (0 | 1)[]): HaxPlayer[] {
+    return teams.map((team, i) => ({
+      id: `p${i}`,
+      team,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      r: PLAYER_R,
+      m: 1,
+      cooldown: 0,
+      charge: 0,
+      kickHeld: false,
+      aimX: 1,
+      aimY: 0,
+      buffs: { speed: 0, power: 0, control: 0, aim: 0, slow: 0, reverse: 0, butter: 0, blind: 0 },
+      teleports: 0,
+    }));
+  }
+
+  it('starts both sides exactly as far from the ball', () => {
+    // Scattering each side independently regularly put one team twice as
+    // near the centre spot as the other, which decides the first touch
+    // before anybody has moved.
+    const pitch = PITCH_PRESETS.normal;
+    const cx = pitch.w / 2;
+    const cy = pitch.h / 2;
+
+    for (let seed = 0; seed < 30; seed++) {
+      let n = seed + 1;
+      const random = () => {
+        n = (n * 1103515245 + 12345) % 2147483648;
+        return n / 2147483648;
+      };
+
+      const players = line([0, 0, 1, 1]);
+      kickoffPositions(players, pitch, random);
+
+      const reds = players.filter((p) => p.team === 0).map((p) => Math.hypot(p.x - cx, p.y - cy));
+      const blues = players.filter((p) => p.team === 1).map((p) => Math.hypot(p.x - cx, p.y - cy));
+      reds.sort((a, b) => a - b);
+      blues.sort((a, b) => a - b);
+
+      for (let i = 0; i < reds.length; i++) {
+        expect(blues[i]).toBeCloseTo(reds[i], 6);
+      }
+    }
+  });
+
+  it('is still different every time', () => {
+    const pitch = PITCH_PRESETS.normal;
+    const a = line([0, 1]);
+    const b = line([0, 1]);
+    kickoffPositions(a, pitch, () => 0.2);
+    kickoffPositions(b, pitch, () => 0.8);
+    expect(a[0].x).not.toBeCloseTo(b[0].x, 3);
+  });
+
+  it('keeps each side in its own half', () => {
+    const pitch = PITCH_PRESETS.normal;
+    const players = line([0, 1]);
+    kickoffPositions(players, pitch, () => 0.5);
+    expect(players[0].x).toBeLessThan(pitch.w / 2);
+    expect(players[1].x).toBeGreaterThan(pitch.w / 2);
+  });
+});
+
+describe('the charge presets', () => {
+  it('offers the default as one of the options', () => {
+    // `String(1 / 180)` is not `"0.00556"`, so writing the options out by
+    // hand meant a room on the default matched none of them and the dropdown
+    // sat on the first — every host was told their match was on Slow.
+    expect(Object.values(CHARGE_PRESETS)).toContain(DEFAULT_RULES.chargeRate);
+    expect(CHARGE_PRESETS.Normal).toBe(DEFAULT_RULES.chargeRate);
   });
 });
 

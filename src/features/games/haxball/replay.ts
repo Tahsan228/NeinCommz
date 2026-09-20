@@ -27,19 +27,19 @@ import type { Snapshot } from './physics';
 const TICK_HZ = 60;
 
 /** The crawl. Below 1 is slower than life. */
-export const SLOW_SPEED = 0.3;
+export const SLOW_SPEED = 0.24;
 
 /** The run-up plays at life speed. It is context, not the point. */
 export const RUN_UP_SPEED = 1;
 
 /** The ball completing its journey, once the strike has been dwelt on. */
-export const RELEASE_SPEED = 0.6;
+export const RELEASE_SPEED = 0.5;
 
 /** How far before the strike the crawl begins. */
-export const SLOW_LEAD_TICKS = 30;
+export const SLOW_LEAD_TICKS = 36;
 
 /** And how far past it, before the release takes over. */
-export const SLOW_TAIL_TICKS = 45;
+export const SLOW_TAIL_TICKS = 54;
 
 export interface ReplayPlan {
   /** First tick shown. */

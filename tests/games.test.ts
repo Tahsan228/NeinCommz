@@ -126,12 +126,19 @@ describe('haxball physics', () => {
     expect(b.vx).toBe(5);
   });
 
-  it('keeps players inside the pitch', () => {
+  it('lets a player off the pitch but not out of the stadium', () => {
+    // Players may run into the goal, behind it and along the touchline. Only
+    // the edge of the ground stops them.
     const { left, top } = bounds();
-    const p = disc({ x: left - 40, y: top - 40, r: PLAYER_R });
-    confinePlayer(p);
-    expect(p.x).toBeCloseTo(left + PLAYER_R, 5);
-    expect(p.y).toBeCloseTo(top + PLAYER_R, 5);
+    const off = disc({ x: left - 40, y: top - 40, r: PLAYER_R });
+    confinePlayer(off);
+    expect(off.x).toBeCloseTo(left - 40, 5);
+    expect(off.y).toBeCloseTo(top - 40, 5);
+
+    const gone = disc({ x: -500, y: -500, r: PLAYER_R });
+    confinePlayer(gone);
+    expect(gone.x).toBeCloseTo(PLAYER_R, 5);
+    expect(gone.y).toBeCloseTo(PLAYER_R, 5);
   });
 
   it('bounces the ball off a side wall away from the goal mouth', () => {

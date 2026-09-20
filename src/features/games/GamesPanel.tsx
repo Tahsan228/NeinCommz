@@ -7,6 +7,7 @@ import { useToasts } from '../../state/toasts';
 import { Icon } from '../../components/Icon';
 import {
   GAMES,
+  MatchInProgress,
   answerInvite,
   cancelSession,
   createSession,
@@ -118,8 +119,17 @@ export function GamesPanel() {
           run: () => {
             void (async () => {
               await answerInvite(inv.id, true);
-              await joinSession(inv.session_id, me);
-              setOpenId(inv.session_id);
+              try {
+                await joinSession(inv.session_id, me);
+                setOpenId(inv.session_id);
+              } catch {
+                // Most likely the match kicked off while the toast was up.
+                push({
+                  icon: 'ban',
+                  title: 'Too late',
+                  sub: 'That match has already started.',
+                });
+              }
             })();
           },
         },
@@ -153,7 +163,8 @@ export function GamesPanel() {
 
   /* -------------------------------------------------- the host walked off -- */
   // A host who closes the tab leaves a room nobody can start. Give it to
-  // whoever has been in it longest, or clear it away if they all left.
+  // whoever has been in it longest, or clear it away once they have all gone
+  // or nothing has happened in it for a quarter of an hour.
   useEffect(() => {
     if (!me || sessions.length === 0) return;
 
@@ -164,6 +175,9 @@ export function GamesPanel() {
         .in('session_id', sessions.map((s) => s.id));
 
       const rows = (data as { session_id: UUID; profile_id: UUID; seat: number }[]) ?? [];
+      const connected = [...presence.entries()]
+        .filter(([, state]) => state !== 'offline')
+        .map(([id]) => id);
 
       for (const session of sessions) {
         const players = rows.filter((r) => r.session_id === session.id);
@@ -172,6 +186,7 @@ export function GamesPanel() {
           players,
           presence,
           me,
+          online: connected,
         });
 
         if (action.kind === 'promote') {
@@ -225,6 +240,10 @@ export function GamesPanel() {
       await joinSession(s.id, me);
       setOpenId(s.id);
     } catch (e) {
+      if (e instanceof MatchInProgress) {
+        setError('That match is already under way — wait for it to finish.');
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Could not join.');
     }
   };
@@ -305,10 +324,21 @@ export function GamesPanel() {
               )}
               <button
                 className="btn btn-sm btn-accent"
-                disabled={!inRoom && count >= meta.max}
+                disabled={!inRoom && (count >= meta.max || s.status === 'active')}
+                title={
+                  !inRoom && s.status === 'active'
+                    ? 'This match has already kicked off'
+                    : undefined
+                }
                 onClick={() => void join(s)}
               >
-                {inRoom ? 'Open' : count >= meta.max ? 'Full' : 'Join'}
+                {inRoom
+                  ? 'Open'
+                  : s.status === 'active'
+                    ? 'In progress'
+                    : count >= meta.max
+                      ? 'Full'
+                      : 'Join'}
               </button>
             </div>
           );

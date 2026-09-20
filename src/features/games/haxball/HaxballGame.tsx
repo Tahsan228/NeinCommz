@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import type { GamePlayer, GameSession, Profile, UUID } from '../../../lib/types';
 import { Avatar } from '../../../components/ui';
@@ -14,13 +14,25 @@ import {
   paintBall,
   paintGoalEffect,
   paintTrail,
+  withAlpha,
   type TrailPoint,
 } from '../../economy/cosmetics';
+import { paintBanner } from '../../economy/banners';
+import { MODES, modeById, modeOf } from './modes';
 import {
   BALL_R,
   CELEBRATION_TICKS,
+  CHARGE_PRESETS,
   DEFAULT_RULES,
+  EFFECT_KINDS,
+  EVENTS,
+  FULL_POWER,
   ORB_RADIUS,
+  POST_R,
+  PRACTICE_CELEBRATION_TICKS,
+  SURROUND,
+  WEATHER,
+  WEATHER_KINDS,
   resetKickoff,
   NO_INPUT,
   PITCH_PRESETS,
@@ -31,6 +43,7 @@ import {
   canKick,
   bounds,
   createWorld,
+  posts,
   secondsRemaining,
   snapshot,
   step,
@@ -40,6 +53,7 @@ import {
   type GoalInfo,
   type Pitch,
   type Snapshot,
+  type Weather,
   type World,
 } from './physics';
 
@@ -51,6 +65,10 @@ const BUFF_COLOR: Record<string, string> = {
   control: '#4a9de0',
   aim: '#c07aff',
   teleport: '#ff6bd6',
+  slow: '#9aa0aa',
+  reverse: '#ff7a6e',
+  butter: '#d9b06a',
+  blind: '#7a6bff',
 };
 
 const BUFF_LABEL: Record<string, string> = {
@@ -59,6 +77,10 @@ const BUFF_LABEL: Record<string, string> = {
   control: 'Control',
   aim: 'Aim',
   teleport: 'Teleport',
+  slow: 'Leaden',
+  reverse: 'Reversed',
+  butter: 'Butterfingers',
+  blind: 'Blinded',
 };
 
 /** How each power-up reads on the pitch. Rare ones get a white rim. */
@@ -68,6 +90,12 @@ const ORB_LOOK: Record<string, { color: string; letter: string; rare: boolean; l
   control: { color: '#4a9de0', letter: 'C', rare: false, label: 'Control' },
   aim: { color: '#c07aff', letter: 'A', rare: true, label: 'Aim' },
   teleport: { color: '#ff6bd6', letter: 'T', rare: true, label: 'Teleport' },
+  // Curses share the shape so they cannot be told apart at a glance from the
+  // far side of the pitch — that gamble is the point of switching them on.
+  slow: { color: '#9aa0aa', letter: '!', rare: false, label: 'Leaden legs' },
+  reverse: { color: '#ff7a6e', letter: '!', rare: false, label: 'Reversed controls' },
+  butter: { color: '#d9b06a', letter: '!', rare: false, label: 'Butterfingers' },
+  blind: { color: '#7a6bff', letter: '!', rare: false, label: 'Blinded' },
 };
 const TEAM_NAME = ['Red', 'Blue'];
 const TICK_MS = 1000 / 60;
@@ -97,6 +125,26 @@ interface HaxState {
   startedAt: string | null;
   /** Knocking a ball about on your own: no clock, no score, no rating. */
   practice: boolean;
+}
+
+/**
+ * The rules a match is actually played under.
+ *
+ * Practice used to write its overrides straight into the room's saved rules,
+ * which meant the *next* real match in that room inherited a two-and-a-half
+ * second goal sequence — and a goal sequence that short is the whole of the
+ * "the replay is extremely sped up" complaint, because the replay is given a
+ * share of it and has to cut its footage to fit. Derived here instead, so a
+ * practice never leaves a mark on the room.
+ */
+export function effectiveRules(state: HaxState): Rules {
+  if (!state.practice) return state.rules;
+  return {
+    ...state.rules,
+    scoreLimit: 0,
+    timeLimitSec: 0,
+    celebrationTicks: PRACTICE_CELEBRATION_TICKS,
+  };
 }
 
 function readState(s: Record<string, unknown>): HaxState {
@@ -162,8 +210,7 @@ export function HaxballGame({
   const scoreRef = useRef({ red: 0, blue: 0 });
   /** Recent ball positions, so a trail has something to draw along. */
   const trailRef = useRef<TrailPoint[]>([]);
-  /** Frame the current celebration started on, for effect timing. */
-  const celebrateFromRef = useRef(0);
+
   /** Rolling record of the last few seconds, for the goal replay. */
   const tapeRef = useRef<Snapshot[]>([]);
   /** The clip frozen at the moment a goal went in. */
@@ -172,6 +219,14 @@ export function HaxballGame({
   const replayWorldRef = useRef<World | null>(null);
   /** Where the replay camera has got to, so it can lag behind the ball. */
   const replayCamRef = useRef({ x: 0, y: 0 });
+  /**
+   * The roster the current match is being played with.
+   *
+   * Frozen at kickoff on purpose. The world used to be rebuilt whenever the
+   * line-up changed, so somebody walking into the room mid-match restarted it
+   * for everyone — which is exactly what it looked like.
+   */
+  const lineUpRef = useRef<{ id: string; team: 0 | 1 }[]>([]);
 
   const [score, setScore] = useState({ red: 0, blue: 0 });
   const [clock, setClock] = useState(0);
@@ -179,7 +234,8 @@ export function HaxballGame({
   const [myBuffs, setMyBuffs] = useState<{ kind: string; left: number }[]>([]);
   const [ready, setReady] = useState(false);
 
-  const pitch = PITCH_PRESETS[state.rules.pitchSize] ?? PITCH_PRESETS.normal;
+  const rules = useMemo(() => effectiveRules(state), [state]);
+  const pitch = PITCH_PRESETS[rules.pitchSize] ?? PITCH_PRESETS.normal;
 
   const teamOf = (id: UUID) => players.find((p) => p.profile_id === id)?.team ?? SPECTATOR;
   const onPitch = players.filter((p) => p.team === 0 || p.team === 1);
@@ -196,10 +252,9 @@ export function HaxballGame({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(onPitch.map((p) => [p.profile_id, p.team])), state.bots.red, state.bots.blue]);
 
-  const rosterKey = lineUp
-    .map((p) => `${p.id}:${p.team}`)
-    .sort()
-    .join('|');
+  // Read rather than depended on: the world is built from whoever was on the
+  // pitch when the whistle went, and pays no attention to the roster after.
+  lineUpRef.current = lineUp;
 
   const syncScore = (next: { red: number; blue: number }) => {
     if (next.red === scoreRef.current.red && next.blue === scoreRef.current.blue) return;
@@ -216,18 +271,21 @@ export function HaxballGame({
       setReady(false);
       return;
     }
-    worldRef.current = createWorld(lineUp, state.rules);
+    worldRef.current = createWorld(lineUpRef.current, rules);
     // A second world of the same shape, so a replay can be drawn without
     // disturbing the live one.
-    replayWorldRef.current = createWorld(lineUp, state.rules);
+    replayWorldRef.current = createWorld(lineUpRef.current, rules);
     tapeRef.current = [];
     clipRef.current = [];
     scoreRef.current = { red: 0, blue: 0 };
     setScore({ red: 0, blue: 0 });
     reportedRef.current = -1;
     setReady(true);
+    // Deliberately *not* keyed on the roster: see `lineUpRef`. A new match, a
+    // new round of the series or a rule change rebuilds the world; somebody
+    // arriving or leaving mid-match does not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.phase, state.series.match, rosterKey, JSON.stringify(state.rules)]);
+  }, [state.phase, state.series.match, JSON.stringify(rules)]);
 
   /* --------------------------------------------------------- networking -- */
   useEffect(() => {
@@ -259,6 +317,41 @@ export function HaxballGame({
   }, [session.id, isHost]);
 
   /* --------------------------------------------------------------- input - */
+
+  /**
+   * Put my input on the wire — or straight into the map, if I am the host.
+   *
+   * Shared, because the keyboard is no longer the only thing that produces
+   * one: the touch controls below feed the same function, so a phone and a
+   * keyboard are indistinguishable by the time the simulation sees them.
+   */
+  const sendInput = useCallback(
+    (next: Input) => {
+      const prev = myInputRef.current;
+      if (
+        prev.up === next.up &&
+        prev.down === next.down &&
+        prev.left === next.left &&
+        prev.right === next.right &&
+        prev.kick === next.kick
+      ) {
+        return;
+      }
+      myInputRef.current = next;
+
+      if (isHost) {
+        inputsRef.current.set(me, next);
+      } else {
+        void channelRef.current?.send({
+          type: 'broadcast',
+          event: 'input',
+          payload: { id: me, input: next },
+        });
+      }
+    },
+    [isHost, me],
+  );
+
   useEffect(() => {
     if (state.phase !== 'playing' || !iAmPlaying) return;
 
@@ -273,18 +366,7 @@ export function HaxballGame({
       const key = KEYS[e.key];
       if (!key) return;
       e.preventDefault();
-      if (myInputRef.current[key] === down) return;
-      myInputRef.current = { ...myInputRef.current, [key]: down };
-
-      if (isHost) {
-        inputsRef.current.set(me, myInputRef.current);
-      } else {
-        void channelRef.current?.send({
-          type: 'broadcast',
-          event: 'input',
-          payload: { id: me, input: myInputRef.current },
-        });
-      }
+      sendInput({ ...myInputRef.current, [key]: down });
     };
 
     const down = (e: KeyboardEvent) => set(e, true);
@@ -297,7 +379,7 @@ export function HaxballGame({
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
     };
-  }, [state.phase, iAmPlaying, isHost, me]);
+  }, [state.phase, iAmPlaying, sendInput]);
 
   /* -------------------------------------------------------- host loop --- */
   useEffect(() => {
@@ -389,7 +471,7 @@ export function HaxballGame({
 
       if (mine) {
         const carried: { kind: string; left: number }[] = [];
-        for (const kind of ['speed', 'power', 'control', 'aim'] as const) {
+        for (const kind of EFFECT_KINDS) {
           if (mine.buffs[kind] > 0) carried.push({ kind, left: Math.ceil(mine.buffs[kind] / 60) });
         }
         if (mine.teleports > 0) carried.push({ kind: 'teleport', left: mine.teleports });
@@ -464,17 +546,7 @@ export function HaxballGame({
         trailRef.current = [];
       }
 
-      if (w.celebrating > 0 && celebrateFromRef.current === 0) {
-        celebrateFromRef.current = w.celebrating;
-      } else if (w.celebrating === 0) {
-        celebrateFromRef.current = 0;
-      }
-
-      const cosmetics = {
-        trail: trailRef.current,
-        equippedOf,
-        celebrateTotal: celebrateFromRef.current,
-      };
+      const cosmetics = { trail: trailRef.current, equippedOf };
 
       // A goal is a short film rather than a banner: hold on the scorer, run
       // the replay, then fade out into the restart.
@@ -482,10 +554,35 @@ export function HaxballGame({
         drawGoalSequence(ctx, w, me, profiles, cosmetics, {
           clip: clipRef.current,
           replayWorld: replayWorldRef.current,
-          total: celebrateFromRef.current || CELEBRATION_TICKS,
+          // The length the rules say, not the first value this screen
+          // happened to observe. A watching client hears about a goal a few
+          // ticks late — and a backgrounded tab, whose animation frames are
+          // paused, hears about it a long way in — so measuring the sequence
+          // from what it first saw squeezed the whole thing into whatever was
+          // left, which is a celebration playing fast for no visible reason.
+          total: w.rules.celebrationTicks || CELEBRATION_TICKS,
           camera: replayCamRef.current,
         });
         return;
+      }
+
+      // A full-power strike, a quake or a meteor moves the camera rather than
+      // the pitch, so everything on screen agrees about being shaken. Only
+      // during live play: the goal sequence has letterbox bars pinned to the
+      // edges of the canvas, and shifting those leaves a strip of the last
+      // frame showing down one side.
+      //
+      // Scaled as well as shifted, and by enough to cover the shift, because
+      // the pitch is painted from the origin — nudge it without growing it
+      // and the far edge stops being painted at all.
+      const shake = shakeAmount(w);
+      ctx.save();
+      if (shake > 0) {
+        const grow = 1 + shake / w.pitch.w + shake / w.pitch.h;
+        ctx.translate(w.pitch.w / 2, w.pitch.h / 2);
+        ctx.scale(grow, grow);
+        ctx.translate(-w.pitch.w / 2, -w.pitch.h / 2);
+        ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
       }
 
       drawPitch(ctx, w, me, profiles, cosmetics);
@@ -495,6 +592,7 @@ export function HaxballGame({
         ctx.fillStyle = 'rgba(6, 8, 12, 0.35)';
         ctx.fillRect(0, 0, w.pitch.w, w.pitch.h);
       }
+      ctx.restore();
     };
 
     raf = requestAnimationFrame(draw);
@@ -624,7 +722,7 @@ export function HaxballGame({
           <div style={{ fontSize: 10.5, color: 'var(--ink-faint)', letterSpacing: '0.06em' }}>
             {state.series.bestOf > 1
               ? `MATCH ${state.series.match} · FIRST TO ${target}`
-              : `FIRST TO ${state.rules.scoreLimit || '∞'}`}
+              : `FIRST TO ${rules.scoreLimit || '∞'}`}
           </div>
         </div>
         <TeamScore team={1} score={score.blue} series={state.series.wins.blue} />
@@ -638,7 +736,8 @@ export function HaxballGame({
         <div className="practice-bar">
           <span className="pill">Practice</span>
           <span className="row-sub" style={{ margin: 0 }}>
-            No clock, no score, nothing rated. Have a go at the power system.
+            No clock, no score, nothing rated, and a short celebration. The
+            room's own settings are untouched.
           </span>
           <button
             className="btn btn-sm"
@@ -671,11 +770,12 @@ export function HaxballGame({
       {iAmPlaying ? (
         <div style={{ width: 'min(420px, 90%)' }}>
           <div className="label" style={{ padding: '0 0 5px', textAlign: 'center' }}>
-            Shot power — hold {'␣'} space, release to shoot
+            {myCharge >= FULL_POWER ? 'Full power — let go!' : 'Shot power — keep the ball to build it'}
           </div>
           <div className="timer-bar" style={{ width: '100%', height: 10 }}>
             <div
               className="timer-fill"
+              data-full={myCharge >= FULL_POWER}
               style={{
                 width: `${Math.round(myCharge * 100)}%`,
                 transition: 'width 60ms linear',
@@ -691,8 +791,15 @@ export function HaxballGame({
         <div className="row-sub">You're spectating. Pick a team in the lobby to play.</div>
       )}
 
-      <div style={{ fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center', lineHeight: 1.6 }}>
-        <b>WASD</b> or arrows to move · hold <b>Space</b> to charge, release to kick
+      {iAmPlaying && <TouchControls onInput={sendInput} current={myInputRef} />}
+
+      <div style={{ fontSize: 12.5, color: 'var(--ink-faint)', textAlign: 'center', lineHeight: 1.6, maxWidth: 560 }}>
+        <b>WASD</b> or arrows to move · <b>Space</b> kicks, and the longer the ball
+        stays at your feet the harder it goes
+        <br />
+        The meter fills whenever the ball is yours — standing still is fine.
+        Run into the net if you want; the ball is the only thing that has to
+        stay on the pitch.
         <br />
         {isHost
           ? 'You are hosting — if you leave, the match ends.'
@@ -705,6 +812,103 @@ export function HaxballGame({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * A thumbstick and a kick pad, for playing on a phone.
+ *
+ * The stick reports the same four booleans the arrow keys do rather than an
+ * analogue direction, so nothing downstream has to know it exists — and a
+ * touch player is neither advantaged nor held back by the control they chose.
+ * Hidden on anything with a fine pointer; see `.touch-controls` in the CSS.
+ */
+function TouchControls({
+  onInput,
+  current,
+}: {
+  onInput: (next: Input) => void;
+  current: React.MutableRefObject<Input>;
+}) {
+  const stickRef = useRef<HTMLDivElement>(null);
+  const [nub, setNub] = useState({ x: 0, y: 0 });
+  const [kicking, setKicking] = useState(false);
+
+  /** Where the thumb is relative to the middle, as a direction plus the nub. */
+  const aim = (e: React.PointerEvent) => {
+    const box = stickRef.current?.getBoundingClientRect();
+    if (!box) return;
+
+    const radius = box.width / 2;
+    let dx = e.clientX - (box.left + radius);
+    let dy = e.clientY - (box.top + radius);
+    const dist = Math.hypot(dx, dy);
+    if (dist > radius) {
+      dx = (dx / dist) * radius;
+      dy = (dy / dist) * radius;
+    }
+    setNub({ x: dx, y: dy });
+
+    // A generous dead zone: a thumb resting on the stick should not walk.
+    const dead = radius * 0.22;
+    onInput({
+      ...current.current,
+      left: dx < -dead,
+      right: dx > dead,
+      up: dy < -dead,
+      down: dy > dead,
+    });
+  };
+
+  const release = () => {
+    setNub({ x: 0, y: 0 });
+    onInput({ ...current.current, up: false, down: false, left: false, right: false });
+  };
+
+  const kick = (down: boolean) => {
+    setKicking(down);
+    onInput({ ...current.current, kick: down });
+  };
+
+  return (
+    <div className="touch-controls">
+      <div
+        ref={stickRef}
+        className="touch-stick"
+        role="application"
+        aria-label="Move"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          aim(e);
+        }}
+        onPointerMove={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) aim(e);
+        }}
+        onPointerUp={release}
+        onPointerCancel={release}
+      >
+        <div
+          className="touch-nub"
+          style={{ transform: `translate(${nub.x}px, ${nub.y}px)` }}
+        />
+      </div>
+
+      <button
+        className="touch-kick"
+        type="button"
+        data-down={kicking}
+        aria-label="Kick"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          kick(true);
+        }}
+        onPointerUp={() => kick(false)}
+        onPointerCancel={() => kick(false)}
+        onPointerLeave={() => kick(false)}
+      >
+        Kick
+      </button>
+    </div>
   );
 }
 
@@ -766,12 +970,18 @@ function HaxLobby({
       'active',
     );
 
+  /** Swap in a whole mode. Everything it does not mention is left alone. */
+  const pickMode = (id: string) => patchRules(modeById(id).rules);
+
   /**
    * An empty pitch and a ball. No clock, no score limit, and a goal resets
    * almost immediately instead of playing the full film.
    */
   const startPractice = async () => {
     await setTeam(session.id, me, 0);
+    // The rules are left exactly as the host set them: `effectiveRules` makes
+    // the practice-only changes at the point the world is built, so a knockabout
+    // cannot quietly leave the room on a two-second goal sequence.
     await setState(
       session.id,
       {
@@ -779,12 +989,6 @@ function HaxLobby({
         phase: 'playing',
         practice: true,
         bots: { red: 0, blue: 0 },
-        rules: {
-          ...state.rules,
-          scoreLimit: 0,
-          timeLimitSec: 0,
-          celebrationTicks: 180,
-        },
         startedAt: new Date().toISOString(),
       },
       'active',
@@ -863,7 +1067,28 @@ function HaxLobby({
       {isHost ? (
         <>
           <div className="group" style={{ padding: 14, width: 'min(560px, 100%)' }}>
-            <div className="label" style={{ padding: '0 0 10px' }}>Match settings</div>
+            <div className="label" style={{ padding: '0 0 10px' }}>How you want to play</div>
+            <div className="mode-grid">
+              {MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className="mode-card"
+                  data-on={modeOf(state.rules) === mode.id}
+                  onClick={() => pickMode(mode.id)}
+                >
+                  <b>{mode.name}</b>
+                  <span>{mode.blurb}</span>
+                </button>
+              ))}
+            </div>
+            <p className="row-sub" style={{ margin: '8px 0 14px' }}>
+              {modeOf(state.rules) === 'custom'
+                ? 'Custom — you have changed something by hand. Pick a mode above to start over.'
+                : 'A mode is only a shortcut for the settings below; change any of them and it becomes custom.'}
+            </p>
+
+            <div className="label" style={{ padding: '4px 0 10px' }}>Match settings</div>
 
             <div className="two-col">
               <Setting label="Team size">
@@ -917,14 +1142,19 @@ function HaxLobby({
               </Setting>
 
               <Setting label="Charge speed">
+                {/* The options come from the same table the default does, so a
+                    room on the default no longer shows the first option — it
+                    used to say Slow on every fresh room. */}
                 <select
                   className="select"
                   value={String(state.rules.chargeRate)}
                   onChange={(e) => patchRules({ chargeRate: Number(e.target.value) })}
                 >
-                  <option value="0.0037">Slow — 4.5s to full</option>
-                  <option value="0.00556">Normal — 3s to full</option>
-                  <option value="0.0111">Fast — 1.5s to full</option>
+                  {Object.entries(CHARGE_PRESETS).map(([name, v]) => (
+                    <option key={name} value={v}>
+                      {name} — {(1 / v / 60).toFixed(1)}s to full
+                    </option>
+                  ))}
                 </select>
               </Setting>
 
@@ -967,20 +1197,59 @@ function HaxLobby({
               </Setting>
             </div>
 
-            <Setting label="Power-up orbs">
-              <select
-                className="select"
-                value={state.rules.powerUps ? 'on' : 'off'}
-                onChange={(e) => patchRules({ powerUps: e.target.value === 'on' })}
-              >
-                <option value="off">Off — a plain match</option>
-                <option value="on">On — orbs around the pitch</option>
-              </select>
-            </Setting>
+            <div className="two-col">
+              <Setting label="Weather">
+                <select
+                  className="select"
+                  value={state.rules.weather}
+                  onChange={(e) => patchRules({ weather: e.target.value as Weather })}
+                >
+                  {WEATHER_KINDS.map((k) => (
+                    <option key={k} value={k}>{WEATHER[k].label}</option>
+                  ))}
+                </select>
+              </Setting>
+
+              <Setting label="Catastrophes">
+                <select
+                  className="select"
+                  value={state.rules.events ? 'on' : 'off'}
+                  onChange={(e) => patchRules({ events: e.target.value === 'on' })}
+                >
+                  <option value="off">Off — nothing goes wrong</option>
+                  <option value="on">On — something every 15s or so</option>
+                </select>
+              </Setting>
+
+              <Setting label="Power-up orbs">
+                <select
+                  className="select"
+                  value={state.rules.powerUps ? 'on' : 'off'}
+                  onChange={(e) => patchRules({ powerUps: e.target.value === 'on' })}
+                >
+                  <option value="off">Off — a plain match</option>
+                  <option value="on">On — orbs around the pitch</option>
+                </select>
+              </Setting>
+
+              <Setting label="Curses in the mix">
+                <select
+                  className="select"
+                  value={state.rules.curses ? 'on' : 'off'}
+                  disabled={!state.rules.powerUps}
+                  onChange={(e) => patchRules({ curses: e.target.value === 'on' })}
+                >
+                  <option value="off">Off — every orb is a present</option>
+                  <option value="on">On — about one in four bites</option>
+                </select>
+              </Setting>
+            </div>
+
             <p className="row-sub" style={{ margin: '-4px 0 10px' }}>
-              Speed, shot power and control turn up often; aim and teleport are
-              rare. Run over one to take it — a teleport is banked until you
-              reach for a ball too far away.
+              {WEATHER[state.rules.weather]?.blurb} Orbs: speed, shot power and
+              control turn up often; aim and teleport are rare. With curses on,
+              some of them leave you leaden, reversed, butter-fingered or
+              half-blind instead.
             </p>
 
             <div className="label" style={{ padding: '14px 0 10px' }}>Computer players</div>
@@ -1097,11 +1366,17 @@ function Setting({ label, children }: { label: string; children: React.ReactNode
 interface Cosmetics {
   trail: TrailPoint[];
   equippedOf: (id: UUID) => Record<string, string>;
-  /** How many celebration frames there were in total, for effect progress. */
-  celebrateTotal: number;
 }
 
-function drawPitch(
+/**
+ * One live frame of the match.
+ *
+ * Exported for the sake of a smoke test rather than for reuse: this is the
+ * only code in the game that can throw on a combination of weather, event and
+ * cosmetic nobody happened to try, and a canvas that throws mid-frame stops
+ * the render loop dead for whoever hit it.
+ */
+export function drawPitch(
   ctx: CanvasRenderingContext2D,
   w: World,
   me: UUID,
@@ -1113,9 +1388,13 @@ function drawPitch(
   const midX = p.w / 2;
   const midY = p.h / 2;
 
-  // Grass, with mown stripes running down the pitch.
+  // The ground the stadium is built on, then the grass on top of it. The
+  // surround is real space now: goals stand in it, players can run round the
+  // back of the net, and the boards live along its edge.
+  drawStadium(ctx, w);
+
   ctx.fillStyle = '#1b3a25';
-  ctx.fillRect(0, 0, p.w, p.h);
+  ctx.fillRect(left, top, right - left, bottom - top);
   const stripes = 10;
   const stripeW = (right - left) / stripes;
   for (let i = 0; i < stripes; i++) {
@@ -1167,7 +1446,8 @@ function drawPitch(
     ctx.stroke();
   }
 
-  // Goals: netting behind a coloured frame.
+  // Goals: netting behind a coloured frame, and the mouth left open so a
+  // player can run straight into it.
   for (const side of [0, 1]) {
     const x = side === 0 ? left : right;
     const dir = side === 0 ? -1 : 1;
@@ -1177,6 +1457,8 @@ function drawPitch(
     ctx.beginPath();
     ctx.rect(Math.min(x, x + dir * depth), goalTop, depth, goalBottom - goalTop);
     ctx.clip();
+    ctx.fillStyle = 'rgba(8, 12, 16, 0.5)';
+    ctx.fillRect(Math.min(x, x + dir * depth), goalTop, depth, goalBottom - goalTop);
     ctx.strokeStyle = 'rgba(255,255,255,0.22)';
     ctx.lineWidth = 1;
     for (let i = -depth; i < depth * 2; i += 6) {
@@ -1191,13 +1473,43 @@ function drawPitch(
     }
     ctx.restore();
 
+    // Only the back and the sides of the net are a line; the front is the
+    // mouth, and drawing a line across it was half of what made the goal
+    // look like a box you could not go into.
     ctx.strokeStyle = TEAM_COLOR[side];
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(x, goalTop);
     ctx.lineTo(x + dir * depth, goalTop);
     ctx.lineTo(x + dir * depth, goalBottom);
     ctx.lineTo(x, goalBottom);
+    ctx.stroke();
+  }
+
+  // The posts themselves, which the ball genuinely bounces off — they are
+  // discs in the simulation, so they are drawn as discs here.
+  for (const post of posts(p)) {
+    ctx.beginPath();
+    ctx.arc(post.x, post.y + 2, POST_R, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+
+    const g = ctx.createRadialGradient(
+      post.x - POST_R * 0.4,
+      post.y - POST_R * 0.4,
+      1,
+      post.x,
+      post.y,
+      POST_R,
+    );
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(1, '#b9bfc8');
+    ctx.beginPath();
+    ctx.arc(post.x, post.y, POST_R, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.stroke();
   }
 
@@ -1287,8 +1599,14 @@ function drawPitch(
     g.addColorStop(1, pl.kickHeld ? lighten(base, 80) : base);
     ctx.fillStyle = g;
     ctx.fill();
+    const cursed =
+      pl.buffs.slow > 0 || pl.buffs.reverse > 0 || pl.buffs.butter > 0 || pl.buffs.blind > 0;
     ctx.lineWidth = pl.id === me ? 3 : 2;
-    ctx.strokeStyle = pl.id === me ? '#ffffff' : 'rgba(0,0,0,0.45)';
+    ctx.strokeStyle = cursed
+      ? '#b06bff'
+      : pl.id === me
+        ? '#ffffff'
+        : 'rgba(0,0,0,0.45)';
     ctx.stroke();
 
     // Charge ring: fills clockwise as the shot builds.
@@ -1299,6 +1617,10 @@ function drawPitch(
       ctx.strokeStyle = pl.charge > 0.85 ? '#f0b429' : 'rgba(255,255,255,0.85)';
       ctx.stroke();
     }
+
+    // Wound all the way up and not yet let go: sparks, so a shot that is
+    // ready to go says so without anybody having to watch the meter.
+    if (pl.charge >= FULL_POWER) paintChargeSparks(ctx, pl.x, pl.y, w.tick);
 
     // Initials inside the disc, so a crowded box is still readable when the
     // names above everyone overlap.
@@ -1311,16 +1633,16 @@ function drawPitch(
 
     if (name) {
       ctx.font = '600 11px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText(name, pl.x, pl.y - PLAYER_R - 9);
+      // Over grass, over netting, over a whiteout: a name needs something
+      // behind it or it is only legible half the time.
+      shadowed(ctx, () => {
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.fillText(name, pl.x, pl.y - PLAYER_R - 9);
+      });
     }
 
     // What they are carrying, as small pips under the disc.
-    const carried: string[] = [];
-    if (pl.buffs.speed > 0) carried.push('speed');
-    if (pl.buffs.power > 0) carried.push('power');
-    if (pl.buffs.control > 0) carried.push('control');
-    if (pl.buffs.aim > 0) carried.push('aim');
+    const carried: string[] = EFFECT_KINDS.filter((kind) => pl.buffs[kind] > 0);
     for (let i = 0; i < pl.teleports; i++) carried.push('teleport');
 
     carried.forEach((kind, i) => {
@@ -1352,6 +1674,15 @@ function drawPitch(
     w.tick,
   );
 
+  // Anything on the pitch that is neither a player nor the ball.
+  drawIntruders(ctx, w);
+
+  // Weather and whatever catastrophe is running sit over the pitch and under
+  // the text, so the pitch stays readable through them.
+  drawWeather(ctx, w);
+  drawEvent(ctx, w);
+  drawBlindness(ctx, w, me);
+
   if (w.countdown > 0) {
     // Snapshots arrive at 30Hz, so counting straight off the tick stutters.
     // Smooth it against the wall clock between updates instead.
@@ -1367,16 +1698,487 @@ function drawPitch(
     ctx.globalAlpha = 0.35 + within * 0.65;
     ctx.font = '700 86px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(secondsLeft > 0 ? String(secondsLeft) : 'GO', 0, 30);
+    shadowed(ctx, () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(secondsLeft > 0 ? String(secondsLeft) : 'GO', 0, 30);
+    });
     ctx.restore();
 
     ctx.font = '600 14px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('Get to your side', midX, midY + 76);
+    shadowed(ctx, () => {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText('Get to your side', midX, midY + 76);
+    });
+  }
+}
+
+/* ------------------------------------------------- the stadium around it -- */
+
+/** Boards behind the goals and along the touchlines, changing as you play. */
+const ADVERTS: { text: string; bg: string; ink: string }[] = [
+  { text: 'NEINCOMMZ · PLAY NICELY', bg: '#1b2a4a', ink: '#cfe0ff' },
+  { text: 'SHOT POWER SOLD SEPARATELY', bg: '#3a1b1b', ink: '#ffd3cf' },
+  { text: 'MIND THE POSTS', bg: '#123527', ink: '#c9f4de' },
+  { text: 'NO REFUNDS ON OWN GOALS', bg: '#2d2410', ink: '#ffe9b8' },
+  { text: 'THE KEEPER IS ALSO A STRIKER', bg: '#22163a', ink: '#e2d2ff' },
+  { text: 'WEATHER PERMITTING', bg: '#0f2c3a', ink: '#c8ecff' },
+  { text: 'BRING BACK THE BOUNCE', bg: '#341f2e', ink: '#ffd0ec' },
+  { text: 'ORBS: READ BEFORE YOU RUN', bg: '#16301b', ink: '#d4f7c5' },
+  { text: 'SUPPORT YOUR LOCAL DEFENDER', bg: '#2a2118', ink: '#f6ddc0' },
+  { text: 'SLOW MOTION AVAILABLE ON REQUEST', bg: '#1a2436', ink: '#d6e4ff' },
+];
+
+/** How long each advert holds before the boards flip. */
+const ADVERT_TICKS = 60 * 6;
+
+/**
+ * The ground, the stands and the boards.
+ *
+ * Painted across the whole canvas before anything else — which is also what
+ * stops the replay camera smearing the goal when it looks past the touchline.
+ * There is something out there to look at now.
+ */
+function drawStadium(ctx: CanvasRenderingContext2D, w: World): void {
+  const p = w.pitch;
+  const { left, right, top, bottom } = bounds(p);
+
+  // The margin is the goal plus the surround; the surround is what there is
+  // to build a stadium in, and every band below is a fraction of it so the
+  // three pitch sizes all look like the same ground.
+  const room = SURROUND;
+  const crowd = room * 0.34;
+  const boardW = room * 0.24;
+  const apron = room * 0.66;
+
+  ctx.fillStyle = '#0d1116';
+  ctx.fillRect(0, 0, p.w, p.h);
+
+  // Terracing: concentric bands of lighter tone, which read as a crowd from
+  // the distance this is seen at.
+  const rows = 4;
+  for (let row = 0; row < rows; row++) {
+    const inset = (row * crowd) / rows;
+    const band = crowd / rows - 1;
+    ctx.fillStyle = `rgba(255,255,255,${0.035 + row * 0.016})`;
+    ctx.fillRect(inset, inset, p.w - inset * 2, band);
+    ctx.fillRect(inset, p.h - inset - band, p.w - inset * 2, band);
+    ctx.fillRect(inset, inset, band, p.h - inset * 2);
+    ctx.fillRect(p.w - inset - band, inset, band, p.h - inset * 2);
   }
 
+  // A scattering of brighter seats, so the crowd is not a flat wash. Fixed
+  // rather than random, or it would crawl from frame to frame.
+  for (let i = 0; i < 140; i++) {
+    const a = Math.sin(i * 12.9898) * 43758.5453;
+    const b = Math.sin(i * 78.233) * 43758.5453;
+    const fx = a - Math.floor(a);
+    const fy = b - Math.floor(b);
+    const depth = 2 + fy * (crowd - 6);
+    const along = i % 2 === 0;
+    const x = along ? fx * p.w : fy < 0.5 ? depth : p.w - depth;
+    const y = along ? (fx < 0.5 ? depth : p.h - depth) : fx * p.h;
+    ctx.fillStyle = `hsla(${Math.floor(fy * 360)} 55% 62% / 0.3)`;
+    ctx.fillRect(x, y, 3.5, 3.5);
+  }
+
+  // The apron between the crowd and the grass.
+  ctx.fillStyle = '#17202a';
+  ctx.fillRect(
+    p.pad - p.goalDepth - apron,
+    p.pad - p.goalDepth - apron,
+    p.w - (p.pad - p.goalDepth - apron) * 2,
+    p.h - (p.pad - p.goalDepth - apron) * 2,
+  );
+
+  const slot = Math.floor(w.tick / ADVERT_TICKS);
+  // Part-way into a slot the boards are mid-flip, which is what the real ones
+  // do and costs one cosine.
+  const into = (w.tick % ADVERT_TICKS) / ADVERT_TICKS;
+  const flip = into < 0.07 ? Math.abs(Math.cos(into * Math.PI * 7)) : 1;
+
+  const board = (
+    cx: number,
+    cy: number,
+    length: number,
+    turned: boolean,
+    index: number,
+  ): void => {
+    const ad = ADVERTS[index % ADVERTS.length];
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (turned) ctx.rotate(Math.PI / 2);
+    // The flip squashes the board about its own long axis.
+    ctx.scale(1, Math.max(0.06, flip));
+
+    ctx.fillStyle = ad.bg;
+    ctx.fillRect(-length / 2, -boardW / 2, length, boardW);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-length / 2, -boardW / 2, length, boardW);
+
+    if (flip > 0.5) {
+      ctx.font = `700 ${Math.max(7, boardW * 0.62)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = ad.ink;
+      ctx.fillText(ad.text, 0, 0.5, length - 8);
+      ctx.textBaseline = 'alphabetic';
+    }
+    ctx.restore();
+  };
+
+  // Along each touchline, just outside the grass.
+  const sideLength = right - left + boardW * 2;
+  board(p.w / 2, top - boardW, sideLength, false, slot);
+  board(p.w / 2, bottom + boardW, sideLength, false, slot + 1);
+
+  // And behind each goal, in the space that used not to exist at all. `left`
+  // less the depth of the net is the back of it; the board sits behind that.
+  const backLeft = left - p.goalDepth;
+  const backRight = right + p.goalDepth;
+  const endLength = p.goalHeight + boardW * 2;
+  board(backLeft - boardW, p.h / 2, endLength, true, slot + 2);
+  board(backRight + boardW, p.h / 2, endLength, true, slot + 3);
+}
+
+/* --------------------------------------------------- weather + disasters -- */
+
+/**
+ * Rain, snow, fog and the rest.
+ *
+ * Every one of these is drawn from the world tick rather than from a particle
+ * list, so a watching client and the host see the same sky without a byte of
+ * it crossing the wire.
+ */
+function drawWeather(ctx: CanvasRenderingContext2D, w: World): void {
+  const kind = w.rules.weather;
+  if (!kind || kind === 'clear') return;
+  const p = w.pitch;
+  const t = w.tick;
+  // How much of the pitch this sky is entitled to hide. One number, declared
+  // next to the physics it comes with, rather than an alpha in each branch.
+  const murk = WEATHER[kind]?.murk ?? 0;
+
+  ctx.save();
+  switch (kind) {
+    case 'rain':
+    case 'storm': {
+      ctx.strokeStyle = 'rgba(180, 210, 255, 0.4)';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < 160; i++) {
+        const x = (i * 97 + t * 6) % p.w;
+        const y = (i * 53 + t * 17) % p.h;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 3, y + 11);
+        ctx.stroke();
+      }
+      ctx.fillStyle = withAlpha('#0a121e', murk * 0.55);
+      ctx.fillRect(0, 0, p.w, p.h);
+      if (kind === 'storm' && t % 190 < 5) {
+        // A flash, which is all a lightning strike needs to be.
+        ctx.fillStyle = `rgba(255,255,255,${0.42 - (t % 190) * 0.08})`;
+        ctx.fillRect(0, 0, p.w, p.h);
+      }
+      break;
+    }
+    case 'snow': {
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      for (let i = 0; i < 130; i++) {
+        const drift = Math.sin((t + i * 30) / 45) * 14;
+        const x = (i * 71 + drift + t * 0.6) % p.w;
+        const y = (i * 41 + t * 1.5) % p.h;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.2 + (i % 3) * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = withAlpha('#dcebff', murk * 0.5);
+      ctx.fillRect(0, 0, p.w, p.h);
+      break;
+    }
+    case 'wind': {
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 24; i++) {
+        const y = (i * 137 + Math.sin(t / 90 + i) * 20) % p.h;
+        const x = (t * 3 + i * 211) % (p.w + 160) - 80;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + 54, y + Math.sin(t / 60 + i) * 5);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'fog': {
+      // Banks of cloud rolling across, rather than a flat grey wash — a flat
+      // one just looks like the brightness is wrong.
+      for (let i = 0; i < 7; i++) {
+        const x = ((t * 0.5 + i * 260) % (p.w + 400)) - 200;
+        const y = p.h * ((i * 0.17) % 1);
+        const g = ctx.createRadialGradient(x, y, 10, x, y, 190);
+        g.addColorStop(0, 'rgba(210, 220, 232, 0.4)');
+        g.addColorStop(1, 'rgba(210, 220, 232, 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x - 200, y - 200, 400, 400);
+      }
+      ctx.fillStyle = withAlpha('#cdd7e4', murk * 0.36);
+      ctx.fillRect(0, 0, p.w, p.h);
+      break;
+    }
+    default:
+      break;
+  }
+  ctx.restore();
+}
+
+/** Whatever catastrophe is running, drawn over the pitch. */
+function drawEvent(ctx: CanvasRenderingContext2D, w: World): void {
+  const ev = w.event;
+  if (!ev) return;
+  const p = w.pitch;
+  const through = 1 - ev.ticks / Math.max(1, ev.total);
+  // Fade in and out, so an event never snaps on at full strength.
+  const strength = Math.min(1, Math.min(through, 1 - through) * 8);
+
+  ctx.save();
+  switch (ev.kind) {
+    case 'blackout': {
+      ctx.fillStyle = `rgba(2, 3, 6, ${0.82 * strength})`;
+      ctx.fillRect(0, 0, p.w, p.h);
+      // One failing floodlight still flickering in the corner.
+      const flicker = 0.25 + Math.abs(Math.sin(w.tick / 5)) * 0.35;
+      const g = ctx.createRadialGradient(p.w * 0.5, p.h * 0.5, 10, p.w * 0.5, p.h * 0.5, p.w * 0.4);
+      g.addColorStop(0, `rgba(255, 244, 214, ${0.2 * flicker * strength})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, p.w, p.h);
+      break;
+    }
+    case 'sirens': {
+      // Blue and red washing across, alternating.
+      const beat = Math.sin(w.tick / 11);
+      ctx.fillStyle = withAlpha(beat > 0 ? '#4a9de0' : '#e0574f', 0.16 * strength * Math.abs(beat));
+      ctx.fillRect(0, 0, p.w, p.h);
+      break;
+    }
+    case 'magnet': {
+      // Field lines converging on the ball.
+      ctx.strokeStyle = withAlpha('#9fd8ff', 0.3 * strength);
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2 + w.tick / 60;
+        const r1 = 34 + ((w.tick * 1.6 + i * 9) % 60);
+        ctx.beginPath();
+        ctx.arc(w.ball.x, w.ball.y, r1, a, a + 0.5);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'lowgrav':
+    case 'icerink': {
+      ctx.fillStyle = withAlpha(ev.kind === 'icerink' ? '#bfe9ff' : '#c0b4ff', 0.1 * strength);
+      ctx.fillRect(0, 0, p.w, p.h);
+      break;
+    }
+    case 'quake': {
+      // Cracks radiating from the epicentre, which the shake is centred on too.
+      ctx.strokeStyle = withAlpha('#14100c', 0.6 * strength);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + ev.x;
+        ctx.beginPath();
+        ctx.moveTo(ev.x, ev.y);
+        let x = ev.x;
+        let y = ev.y;
+        for (let k = 1; k <= 5; k++) {
+          x += Math.cos(a + Math.sin(i * k) * 0.5) * 34;
+          y += Math.sin(a + Math.sin(i * k) * 0.5) * 34;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineWidth = 4 * strength + 0.5;
+        ctx.stroke();
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  ctx.restore();
+
+  // Every event announces itself, because an unexplained rule change is just
+  // a bug as far as anyone playing is concerned.
+  if (through < 0.22) {
+    const profile = EVENTS[ev.kind];
+    const rise = Math.min(1, through / 0.06) * Math.min(1, (0.22 - through) / 0.05);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, rise);
+    ctx.textAlign = 'center';
+    ctx.font = '800 26px system-ui, sans-serif';
+    shadowed(ctx, () => {
+      ctx.fillStyle = '#ffd36e';
+      ctx.fillText(profile.label.toUpperCase(), p.w / 2, p.h * 0.28);
+    });
+    ctx.font = '600 13px system-ui, sans-serif';
+    shadowed(ctx, () => {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(profile.blurb, p.w / 2, p.h * 0.28 + 22);
+    });
+    ctx.restore();
+  }
+}
+
+/** Pitch invaders and meteors. */
+function drawIntruders(ctx: CanvasRenderingContext2D, w: World): void {
+  for (const it of w.intruders) {
+    if (it.kind === 0) {
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 11, 0, Math.PI * 2);
+      ctx.fillStyle = '#c9a227';
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.stroke();
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', it.x, it.y + 0.5);
+      ctx.textBaseline = 'alphabetic';
+      continue;
+    }
+
+    // A meteor: a shadow that closes up, then the impact ring.
+    if (it.ttl > 30) {
+      const fall = 1 - (it.ttl - 30) / 60;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 46 * (1 - fall * 0.65), 0, Math.PI * 2);
+      ctx.strokeStyle = withAlpha('#ff963c', 0.35 + fall * 0.5);
+      ctx.lineWidth = 2 + fall * 3;
+      ctx.stroke();
+
+      const h = 240 * (1 - fall);
+      ctx.beginPath();
+      ctx.moveTo(it.x - h * 0.4, it.y - h);
+      ctx.lineTo(it.x, it.y);
+      ctx.strokeStyle = withAlpha('#ffb450', 0.8);
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    } else {
+      const boom = 1 - it.ttl / 30;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 40 + boom * 90, 0, Math.PI * 2);
+      ctx.strokeStyle = withAlpha('#ff963c', 1 - boom);
+      ctx.lineWidth = 10 * (1 - boom);
+      ctx.stroke();
+    }
+  }
+}
+
+/** The blind curse, which only darkens the screen of whoever is carrying it. */
+function drawBlindness(ctx: CanvasRenderingContext2D, w: World, me: UUID): void {
+  const mine = w.players.find((q) => q.id === me);
+  if (!mine || mine.buffs.blind <= 0) return;
+  const p = w.pitch;
+
+  const g = ctx.createRadialGradient(mine.x, mine.y, 40, mine.x, mine.y, 190);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(2, 2, 6, 0.92)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, p.w, p.h);
+}
+
+/* ----------------------------------------------------------- shot feel --- */
+
+/** How long the picture shakes after a full-power strike. */
+const SLAM_SHAKE_TICKS = 22;
+const SLAM_SHAKE = 7;
+
+/**
+ * How hard the picture should be shaking this frame, in pixels.
+ *
+ * Driven by the world rather than by a local event, so everyone watching the
+ * same match feels the same thump at the same moment.
+ */
+function shakeAmount(w: World): number {
+  let amount = 0;
+
+  const since = w.tick - w.slamTick;
+  if (w.slamTick >= 0 && since >= 0 && since < SLAM_SHAKE_TICKS) {
+    amount = SLAM_SHAKE * (1 - since / SLAM_SHAKE_TICKS);
+  }
+  if (w.event?.kind === 'quake') amount = Math.max(amount, 3.2);
+  if (w.intruders.some((it) => it.kind === 1 && Math.abs(it.ttl - 30) < 7)) {
+    amount = Math.max(amount, 6.5);
+  }
+  return amount;
+}
+
+/** Sparks off a player who has wound all the way up and not let go yet. */
+function paintChargeSparks(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  tick: number,
+): void {
+  ctx.save();
+  for (let i = 0; i < 9; i++) {
+    // Each spark runs out from the disc on its own little clock.
+    const life = ((tick * 2.4 + i * 17) % 40) / 40;
+    const a = i * 2.3 + tick / 26;
+    const dist = PLAYER_R + 4 + life * 20;
+    const size = (1 - life) * 3.1;
+    if (size <= 0.2) continue;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * dist, y + Math.sin(a) * dist, size, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${38 + i * 4} 100% ${58 + life * 20}% / ${1 - life})`;
+    ctx.fill();
+  }
+
+  // A hot rim, so it reads even when the sparks happen to be behind someone.
+  ctx.beginPath();
+  ctx.arc(x, y, PLAYER_R + 6.5 + Math.sin(tick / 4) * 1.2, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(255, 210, 110, ${0.5 + Math.sin(tick / 5) * 0.25})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Draw text with something behind it.
+ *
+ * Canvas text sits directly on whatever was painted underneath, and the pitch
+ * is not a background anyone chose: white-on-white happens over the snow,
+ * over a whiteout goal effect, over the netting. A shadow is one line and it
+ * makes every caption legible over all of them.
+ */
+function shadowed(ctx: CanvasRenderingContext2D, draw: () => void, blur = 6): void {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+  ctx.shadowBlur = blur;
+  ctx.shadowOffsetY = 1;
+  draw();
+  // A second pass, because one shadow at this blur is too soft on its own to
+  // separate small text from a busy background.
+  ctx.shadowBlur = blur * 0.5;
+  draw();
+  ctx.restore();
+}
+
+/** A rounded plate to sit text on, for the captions that need more than a shadow. */
+function plate(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  alpha = 0.55,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 8);
+  ctx.fillStyle = `rgba(6, 8, 12, ${alpha})`;
+  ctx.fill();
+  ctx.restore();
 }
 
 /* ======================================================= goal sequence ==== */
@@ -1388,8 +2190,8 @@ function drawPitch(
  * with a rising alpha, so the picture never cuts and never dips to black. The
  * only darkening anywhere in the game belongs to the countdown.
  */
-const MOMENT_END = 0.26;
-const REPLAY_END = 0.9;
+const MOMENT_END = 0.22;
+const REPLAY_END = 0.92;
 const CROSSFADE = 0.05;
 
 /** How hard the replay camera chases the ball. Lower lags further behind. */
@@ -1493,27 +2295,49 @@ function goalCard(
   const x = 26;
   const slide = (1 - rise) * 26;
 
+  const line3 = goal?.ownGoal
+    ? 'own goal'
+    : goal?.assist
+      ? `assist  ${nameFor(goal.assist, profiles)}`
+      : 'unassisted';
+  const who = nameFor(scorerId, profiles);
+
   ctx.save();
   ctx.globalAlpha *= Math.min(1, rise);
   ctx.textAlign = 'left';
 
+  // A plate behind the whole card. The caption used to be bare text over the
+  // grass, the netting and whatever the goal effect was doing, and over a
+  // confetti burst or a whiteout it simply disappeared.
+  const widest = Math.max(
+    ...([
+      ['800 54px system-ui, sans-serif', 'GOAL'],
+      ['700 22px system-ui, sans-serif', who],
+      ['600 14px system-ui, sans-serif', line3],
+    ] as const).map(([font, text]) => {
+      ctx.font = font;
+      return ctx.measureText(text).width;
+    }),
+  );
+  plate(ctx, x - slide - 14, p.h * 0.45 - 52, widest + 28, 116, 0.5);
+
   ctx.font = '800 54px system-ui, sans-serif';
-  ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
-  ctx.fillText('GOAL', x - slide, p.h * 0.45);
+  shadowed(ctx, () => {
+    ctx.fillStyle = goal ? TEAM_COLOR[goal.team] : '#ffffff';
+    ctx.fillText('GOAL', x - slide, p.h * 0.45);
+  }, 10);
 
   ctx.font = '700 22px system-ui, sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(nameFor(scorerId, profiles), x - slide, p.h * 0.45 + 32);
+  shadowed(ctx, () => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(who, x - slide, p.h * 0.45 + 32);
+  });
 
   ctx.font = '600 14px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.62)';
-  if (goal?.ownGoal) {
-    ctx.fillText('own goal', x - slide, p.h * 0.45 + 54);
-  } else if (goal?.assist) {
-    ctx.fillText(`assist  ${nameFor(goal.assist, profiles)}`, x - slide, p.h * 0.45 + 54);
-  } else {
-    ctx.fillText('unassisted', x - slide, p.h * 0.45 + 54);
-  }
+  shadowed(ctx, () => {
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.fillText(line3, x - slide, p.h * 0.45 + 54);
+  });
   ctx.restore();
 }
 
@@ -1547,7 +2371,7 @@ function drawGoalSequence(
 
     ctx.globalAlpha = aMoment;
     withCamera(ctx, p, focus, zoom, anchorX, p.h / 2, () => {
-      drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
+      drawPitch(ctx, w, me, profiles, cosmetics);
 
       if (scorer) {
         const pulse = 1 + Math.sin(local * 14) * 0.08;
@@ -1595,8 +2419,10 @@ function drawGoalSequence(
           ctx.lineTo(5, 6);
           ctx.fill();
 
-          ctx.fillStyle = '#ffffff';
-          ctx.fillText(shout, 0, 0);
+          shadowed(ctx, () => {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(shout, 0, 0);
+          }, 4);
           ctx.restore();
         }
       }
@@ -1605,6 +2431,23 @@ function drawGoalSequence(
     letterbox(ctx, w, local / 0.3);
     goalCard(ctx, w, goal, scorerId, profiles, easeOut((local - 0.1) / 0.3));
     ctx.globalAlpha = 1;
+  }
+
+  // The bought image celebration, on the right, for the whole sequence rather
+  // than for one act — it pops in, holds through the replay and fades out.
+  if (scorerId && !goal?.ownGoal) {
+    const kit = cosmetics.equippedOf(scorerId);
+    paintBanner(
+      kit.banner,
+      kit.banneranim,
+      ctx,
+      p.w,
+      p.h,
+      t,
+      w.tick,
+      profiles.get(scorerId)?.accent_color ?? TEAM_COLOR[goal?.team ?? 0],
+      nameFor(scorerId, profiles),
+    );
   }
 
   /* -------------------------------------------------------- 2. the replay */
@@ -1644,45 +2487,54 @@ function drawGoalSequence(
 
     ctx.globalAlpha = aReplay;
     withCamera(ctx, p, { x: cam.x, y: cam.y }, REPLAY_ZOOM, p.w / 2, p.h / 2, () => {
-      drawPitch(ctx, rw, me, profiles, {
-        trail: [],
-        equippedOf: cosmetics.equippedOf,
-        celebrateTotal: 0,
-      });
+      drawPitch(ctx, rw, me, profiles, { trail: [], equippedOf: cosmetics.equippedOf });
     });
 
     letterbox(ctx, w, 1);
     drawReplayBadge(ctx, p.w, local);
 
     const bar = p.h * 0.12;
+    const baseline = p.h - bar * 0.42;
     ctx.save();
     ctx.textAlign = 'left';
+
     ctx.font = '700 15px system-ui, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(nameFor(scorerId, profiles), 18, p.h - bar * 0.42);
+    shadowed(ctx, () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(nameFor(scorerId, profiles), 18, baseline);
+    });
 
     if (goal?.assist) {
       ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18, p.h - bar * 0.42 + 17);
+      shadowed(ctx, () => {
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.fillText(`assist ${nameFor(goal.assist, profiles)}`, 18, baseline + 17);
+      });
     }
 
     ctx.textAlign = 'right';
     ctx.font = '700 16px system-ui, sans-serif';
-    ctx.fillStyle = TEAM_COLOR[0];
-    ctx.fillText(String(w.score.red), p.w - 46, p.h - bar * 0.42);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('–', p.w - 32, p.h - bar * 0.42);
-    ctx.fillStyle = TEAM_COLOR[1];
-    ctx.fillText(String(w.score.blue), p.w - 16, p.h - bar * 0.42);
+    shadowed(ctx, () => {
+      ctx.fillStyle = TEAM_COLOR[0];
+      ctx.fillText(String(w.score.red), p.w - 46, baseline);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText('–', p.w - 32, baseline);
+      ctx.fillStyle = TEAM_COLOR[1];
+      ctx.fillText(String(w.score.blue), p.w - 16, baseline);
+    });
     ctx.restore();
 
     if (inSlowMotion(local, plan)) {
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = '700 12px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.fillText('SLOW MOTION', p.w / 2, bar * 0.62);
+      const label = 'SLOW MOTION';
+      const width = ctx.measureText(label).width;
+      plate(ctx, p.w / 2 - width / 2 - 10, bar * 0.62 - 13, width + 20, 19, 0.5);
+      shadowed(ctx, () => {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(label, p.w / 2, bar * 0.62);
+      });
       ctx.restore();
     }
     ctx.globalAlpha = 1;
@@ -1692,7 +2544,7 @@ function drawGoalSequence(
   if (aRestart > 0) {
     const local = Math.min(1, Math.max(0, (t - REPLAY_END) / (1 - REPLAY_END)));
     ctx.globalAlpha = aRestart;
-    drawPitch(ctx, w, me, profiles, { ...cosmetics, celebrateTotal: 0 });
+    drawPitch(ctx, w, me, profiles, cosmetics);
     letterbox(ctx, w, 1 - local);
     ctx.globalAlpha = 1;
   }
@@ -1716,8 +2568,10 @@ function drawReplayBadge(ctx: CanvasRenderingContext2D, width: number, progress:
 
   ctx.font = '700 13px system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText('REPLAY', 48, 34);
+  shadowed(ctx, () => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('REPLAY', 48, 34);
+  });
 
   // How far through the clip we are.
   ctx.fillStyle = 'rgba(255,255,255,0.2)';
